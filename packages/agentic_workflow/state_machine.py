@@ -1,4 +1,7 @@
-import time
+"""
+Agent State Machine - Starter Template
+Assigned Member: Chiranthan Rk (feature/agentic-workflow - Task W4)
+"""
 from typing import List
 from packages.agentic_workflow.models import (
     ActionPlan,
@@ -11,37 +14,21 @@ from packages.agentic_workflow.models import (
 class AgentStateMachine:
     """
     Finite state machine managing multi-step agent decisions, transitions, and safety gate.
+    
+    TODO (Chiranthan Rk):
+    1. Manage state transitions (IDLE -> LISTENING -> PLANNING -> AWAITING_APPROVAL -> EXECUTING -> RESPONDING).
+    2. In build_plan:
+       - Check if any step has safety_level C (Sensitive) or D (Destructive).
+       - If yes, set requires_approval=True and transition to AWAITING_APPROVAL.
+       - Otherwise, transition to EXECUTING.
     """
     def __init__(self):
         self.state: AgentState = AgentState.IDLE
 
     def transition_to(self, new_state: AgentState) -> None:
-        self.state = new_state
+        """Update current agent state."""
+        raise NotImplementedError("TODO: Chiranthan Rk - Implement transition_to")
 
     def build_plan(self, session_id: str, goal: str, steps: List[WorkflowStep]) -> ActionPlan:
-        self.transition_to(AgentState.PLANNING)
-
-        has_sensitive = any(s.safety_level in (SafetyLevel.C, SafetyLevel.D) for s in steps)
-        if any(s.safety_level == SafetyLevel.D for s in steps):
-            overall_safety = SafetyLevel.D
-        elif any(s.safety_level == SafetyLevel.C for s in steps):
-            overall_safety = SafetyLevel.C
-        else:
-            overall_safety = SafetyLevel.A
-
-        plan = ActionPlan(
-            plan_id=f"plan-{int(time.time() * 1000)}",
-            session_id=session_id,
-            goal=goal,
-            steps=steps,
-            current_step_index=0,
-            overall_safety_level=overall_safety,
-            requires_approval=has_sensitive,
-        )
-
-        if has_sensitive:
-            self.transition_to(AgentState.AWAITING_APPROVAL)
-        else:
-            self.transition_to(AgentState.EXECUTING)
-
-        return plan
+        """Construct an ActionPlan and trigger appropriate state transition."""
+        raise NotImplementedError("TODO: Chiranthan Rk - Implement build_plan")

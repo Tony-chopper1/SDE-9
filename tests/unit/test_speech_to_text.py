@@ -1,39 +1,33 @@
-from packages.speech_to_text import FakeTranscriberService, SegmentAccumulator, TranscriptSegment
+"""
+Unit Tests for Speech-to-Text Module
+Assigned Member: Pavanchand R M (feature/speech-to-text - Task W2)
+
+TODO (Pavanchand R M):
+Write unit tests for FakeTranscriberService and SegmentAccumulator to achieve >80% coverage.
+"""
+import pytest
+from packages.speech_to_text import TranscriptSegment, AccumulatedUtterance, FakeTranscriberService, SegmentAccumulator
 
 
-def test_fake_transcriber_returns_segments():
-    stt = FakeTranscriberService()
-    segments = stt.transcribe(b"dummy_pcm_bytes", phrase_index=0)
-
-    assert len(segments) == 1
-    assert "error" in segments[0].text
-    assert segments[0].confidence > 0.9
-
-
-def test_segment_accumulator_ordering_and_reset():
-    accumulator = SegmentAccumulator(session_id="session-test")
-
-    seg1 = TranscriptSegment(
-        id="s1",
-        text="Why is",
+def test_transcript_model_instantiation():
+    """Verify that TranscriptSegment and AccumulatedUtterance can be constructed."""
+    seg = TranscriptSegment(
+        id="seg-1",
+        text="Hello world",
         confidence=0.95,
-        start_time=1.0,
-        end_time=1.5,
+        start_time=0.0,
+        end_time=1.0,
     )
-    seg2 = TranscriptSegment(
-        id="s2",
-        text="this error appearing?",
-        confidence=0.98,
-        start_time=1.6,
-        end_time=2.4,
-    )
+    assert seg.text == "Hello world"
+    assert seg.confidence == 0.95
 
-    accumulator.add_segment(seg1)
-    accumulator.add_segment(seg2)
-    assert accumulator.current_segments_count == 2
 
-    utterance = accumulator.finalize_utterance()
-    assert utterance.full_text == "Why is this error appearing?"
-    assert utterance.is_complete is True
-    # Memory leak guard: should be clean
-    assert accumulator.current_segments_count == 0
+# TODO (Pavanchand R M): Uncomment and implement after completing fake_transcriber.py and accumulator.py
+# def test_fake_transcriber_returns_segments():
+#     stt = FakeTranscriberService()
+#     segments = stt.transcribe(b"dummy_pcm")
+#     assert len(segments) > 0
+#
+# def test_segment_accumulator_ordering_and_reset():
+#     acc = SegmentAccumulator("sess-1")
+#     ...

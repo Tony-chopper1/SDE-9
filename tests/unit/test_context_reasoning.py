@@ -1,42 +1,24 @@
-from packages.context_reasoning import (
-    ContextManager,
-    VersionedPromptManager,
-    MockReasoningService,
-)
+"""
+Unit Tests for Context & Reasoning Module
+Assigned Member: Praveen Kumar R (feature/context-reasoning - Task W3)
+
+TODO (Praveen Kumar R):
+Write unit tests for ContextManager, VersionedPromptManager, and MockReasoningService to achieve >80% coverage.
+"""
+import pytest
+from packages.context_reasoning import WindowContext, ConversationContext, ReasoningResult
 
 
-def test_context_manager_updates():
-    cm = ContextManager("session-123")
-    ctx = cm.update_user_query("What does this error mean?", "Traceback...")
+def test_context_models_instantiation():
+    """Verify that Context models can be constructed."""
+    win = WindowContext(app_name="VS Code", window_title="test.py")
+    ctx = ConversationContext(session_id="s1", active_window=win)
 
-    assert ctx.user_query == "What does this error mean?"
-    assert ctx.active_window.visible_snippet == "Traceback..."
-
-
-def test_versioned_prompt_render():
-    pm = VersionedPromptManager()
-    rendered = pm.render_prompt(
-        "v1.0",
-        app_name="VS Code",
-        snippet="NameError",
-        query="Fix this error",
-    )
-    assert "VS Code" in rendered
-    assert "NameError" in rendered
+    assert ctx.session_id == "s1"
+    assert ctx.active_window.app_name == "VS Code"
 
 
-def test_mock_reasoning_intent_classification():
-    cm = ContextManager("session-123")
-    service = MockReasoningService()
-
-    ctx = cm.update_user_query("Why is my code failing?")
-    result = service.reason(ctx)
-    assert result.intent == "EXPLAIN_ERROR"
-    assert result.requires_tool is False
-    assert result.direct_response is not None
-
-    ctx2 = cm.update_user_query("Find my report document")
-    result2 = service.reason(ctx2)
-    assert result2.intent == "FILE_SEARCH"
-    assert result2.requires_tool is True
-    assert result2.planned_tool_name == "file.search"
+# TODO (Praveen Kumar R): Uncomment and implement after completing context_manager.py and mock_reasoning.py
+# def test_context_manager_updates():
+#     cm = ContextManager("s1")
+#     ...

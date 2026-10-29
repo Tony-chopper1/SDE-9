@@ -1,36 +1,31 @@
-import time
+"""
+Context Manager - Starter Template
+Assigned Member: Praveen Kumar R (feature/context-reasoning - Task W3)
+"""
 from typing import Optional
 from packages.context_reasoning.models import ConversationContext, WindowContext
 
 
 class ContextManager:
     """
-    Tracks and updates active application context and conversation history.
+    Manages active window, screen context, and conversation history.
+    
+    TODO (Praveen Kumar R):
+    1. Initialize ConversationContext with default active window info.
+    2. Implement update_user_query to refresh the query and update timestamp.
+    3. Implement add_turn to append user and assistant messages to history.
     """
     def __init__(self, session_id: str):
-        self._context = ConversationContext(
-            session_id=session_id,
-            active_window=WindowContext(
-                app_name="VS Code",
-                window_title="main.py - project",
-                app_type="ide",
-                visible_snippet="ImportError: No module named 'fastapi'",
-            ),
-            user_query="",
-            history=[],
-            timestamp=time.time(),
-        )
+        self.session_id = session_id
 
     def update_user_query(self, query: str, visible_snippet: Optional[str] = None) -> ConversationContext:
-        self._context.user_query = query
-        if visible_snippet:
-            self._context.active_window.visible_snippet = visible_snippet
-        self._context.timestamp = time.time()
-        return self._context
+        """Update context with new query and optional visible code/screen snippet."""
+        raise NotImplementedError("TODO: Praveen Kumar R - Implement update_user_query")
 
     def add_turn(self, role: str, content: str) -> None:
-        from packages.context_reasoning.models import ConversationTurn
-        self._context.history.append(ConversationTurn(role=role, content=content))
+        """Append a turn (user/assistant/system) to conversation history."""
+        raise NotImplementedError("TODO: Praveen Kumar R - Implement add_turn")
 
     def get_context(self) -> ConversationContext:
-        return self._context
+        """Retrieve the current context snapshot."""
+        raise NotImplementedError("TODO: Praveen Kumar R - Implement get_context")
