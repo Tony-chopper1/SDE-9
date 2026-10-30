@@ -24,6 +24,11 @@ dev = [
     "mypy>=1.8.0",
 ]
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*", "packages*"]
+exclude = ["frontend*", "tests*"]
+
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["packages", "backend", "tests"]
 pythonpath = [".", "backend", "packages"]
