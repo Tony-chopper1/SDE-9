@@ -3,7 +3,7 @@ Comprehensive Unit & Integration Tests for Speech-to-Text Module
 Owner: Pavanchand R M (feature/speech-to-text - Team Lead)
 Task ID: W2
 """
-import time
+import os
 import pytest
 from packages.speech_to_text.models import (
     AccumulatorState,
@@ -41,6 +41,15 @@ class TestTranscriptModels:
                 end_time=1.0,
             )
 
+        with pytest.raises(ValueError):
+            TranscriptSegment(
+                id="seg-err-neg",
+                text="error",
+                confidence=-0.1,
+                start_time=0.0,
+                end_time=1.0,
+            )
+
     def test_accumulated_utterance_model(self):
         utterance = AccumulatedUtterance(
             id="utt-1",
@@ -67,12 +76,44 @@ class TestTranscriptModels:
         assert event.event_type == "transcript.segment"
         assert event.segment.text == "Speech event"
 
+    def test_typescript_definitions_file_exists(self):
+        """Verifies deliverable: Create TypeScript type definitions."""
+        ts_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "types.ts",
+        )
+        assert os.path.exists(ts_path)
+        with open(ts_path, "r") as f:
+            content = f.read()
+        assert "export interface TranscriptSegment" in content
+        assert "export interface AccumulatedUtterance" in content
+        assert "export type AccumulatorState" in content
+
 
 class TestFakeTranscriberService:
     def test_transcribe_empty_audio_returns_empty(self):
         service = FakeTranscriberService()
         result = service.transcribe(b"")
         assert result == []
+
+    def test_confidence_scoring_logic(self):
+        service = FakeTranscriberService()
+        # Empty audio or phrase -> 0.0 confidence
+        assert service.calculate_confidence(b"", "Hello") == 0.0
+        assert service.calculate_confidence(b"\x00" * 1000, "") == 0.0
+
+        # Small audio buffer receives penalty
+        score_small = service.calculate_confidence(b"\x00" * 100, "Why is this code failing?")
+        # Sufficient audio buffer receives high score
+        score_full = service.calculate_confidence(b"\x00" * 3200, "Why is this code failing?")
+        assert score_full > score_small
+        assert 0.0 <= score_full <= 1.0
+
+        # Final segment should score higher than interim partial
+        score_interim = service.calculate_confidence(b"\x00" * 3200, "Why is this", is_final=False)
+        score_final = service.calculate_confidence(b"\x00" * 3200, "Why is this", is_final=True)
+        assert score_final > score_interim
 
     def test_transcribe_deterministic_phrases(self):
         service = FakeTranscriberService()
@@ -92,7 +133,7 @@ class TestFakeTranscriberService:
     def test_transcribe_with_custom_timestamp(self):
         service = FakeTranscriberService()
         fixed_time = 1000.0
-        res = service.transcribe(b"dummy", phrase_index=2, start_time_offset=fixed_time)
+        res = service.transcribe(b"\x00" * 1000, phrase_index=2, start_time_offset=fixed_time)
         assert res[0].start_time == fixed_time
         assert res[0].end_time > fixed_time
 
@@ -204,6 +245,14 @@ class TestSegmentAccumulator:
         assert utterance.full_text == ""
         assert utterance.duration == 0.0
         assert acc.count == 0
+
+    def test_explicit_clear(self):
+        acc = SegmentAccumulator(session_id="sess-clear")
+        acc.add_segment(TranscriptSegment(id="s1", text="Clear me", start_time=0.0, end_time=1.0))
+        assert acc.count == 1
+        acc.clear()
+        assert acc.count == 0
+        assert acc.state == AccumulatorState.IDLE
 
     def test_memory_leak_stress_test(self):
         """
