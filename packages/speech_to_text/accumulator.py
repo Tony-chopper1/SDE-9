@@ -1,8 +1,4 @@
 """
-Segment Accumulator State Machine
-Owner: Pavanchand R M (feature/speech-to-text - Team Lead)
-Task ID: W2
-
 Aggregates streaming partial and final transcript chunks, handles overlapping timestamps,
 orders segments chronologically, and prevents memory leaks through state-managed resets.
 """

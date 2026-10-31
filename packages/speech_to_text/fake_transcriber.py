@@ -1,7 +1,5 @@
 """
 Fake Transcriber Service
-Owner: Pavanchand R M (feature/speech-to-text - Team Lead)
-Task ID: W2
 
 Provides deterministic simulated speech-to-text transcription for local mock mode,
 reproducing both single-shot transcription and streaming partial chunks with dynamic confidence scoring.

@@ -1,7 +1,5 @@
 """
 Speech-to-Text Data Models & Schemas
-Owner: Pavanchand R M (feature/speech-to-text - Team Lead)
-Task ID: W2
 """
 from enum import Enum
 from typing import List, Optional

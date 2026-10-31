@@ -1,7 +1,5 @@
 """
 Comprehensive Unit & Integration Tests for Speech-to-Text Module
-Owner: Pavanchand R M (feature/speech-to-text - Team Lead)
-Task ID: W2
 """
 import os
 import pytest
@@ -278,3 +276,13 @@ class TestSegmentAccumulator:
         assert len(utterance.segments) == 1000
         assert acc.count == 0
         assert acc.current_segments == []
+
+
+def test_cli_demo_execution(capsys):
+    """Verifies that the CLI demonstration runs without errors."""
+    from packages.speech_to_text.cli import run_demo
+    run_demo()
+    captured = capsys.readouterr()
+    assert "Speech-to-Text & Accumulator Demo" in captured.out
+    assert "Demo Completed Successfully" in captured.out
+
