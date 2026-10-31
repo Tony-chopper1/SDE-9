@@ -1,13 +1,60 @@
 
 /* @vitest-environment jsdom */
 
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import {
+  describe,
+  it,
+  expect,
+  afterEach,
+  beforeEach,
+  vi,
+} from 'vitest';
+
+import {
+  render,
+  screen,
+  fireEvent,
+  cleanup,
+} from '@testing-library/react';
+
 import { App } from '../App';
 
-// Clear the rendered app after each test
+beforeEach(() => {
+  // Simulate microphone access
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn().mockResolvedValue({
+        getTracks: () => [{ stop: vi.fn() }],
+      }),
+    },
+  });
+
+  // Simulate the browser's MediaRecorder
+  vi.stubGlobal(
+    'MediaRecorder',
+    class FakeMediaRecorder {
+      state: RecordingState = 'inactive';
+      mimeType = 'audio/webm';
+
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: ((event: Event) => void) | null = null;
+
+      start() {
+        this.state = 'recording';
+      }
+
+      stop() {
+        this.state = 'inactive';
+        this.onstop?.(new Event('stop'));
+      }
+    }
+  );
+});
+
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 describe('App component', () => {
@@ -19,7 +66,7 @@ describe('App component', () => {
     ).toBeTruthy();
   });
 
-  it('changes the button text when clicked', () => {
+  it('changes the button text when clicked', async () => {
     render(<App />);
 
     const button = screen.getByRole('button', {
@@ -29,7 +76,7 @@ describe('App component', () => {
     fireEvent.click(button);
 
     expect(
-      screen.getByRole('button', { name: 'Stop Recording' })
+      await screen.findByRole('button', { name: 'Stop Recording' })
     ).toBeTruthy();
   });
 
