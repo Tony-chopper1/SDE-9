@@ -1,3 +1,4 @@
+from uuid import uuid4
 from backend.schemas.session import SessionStatus
 from backend.services.session_service import SessionService
 
@@ -33,6 +34,12 @@ def test_get_session():
     assert result == session
 
 
+def test_get_session_non_existent():
+    service = SessionService()
+    result = service.get_session(uuid4())
+    assert result is None
+
+
 def test_update_status():
     service = SessionService()
 
@@ -44,3 +51,9 @@ def test_update_status():
     )
 
     assert updated_session.status == SessionStatus.PAUSED
+
+
+def test_update_status_non_existent():
+    service = SessionService()
+    updated_session = service.update_status(uuid4(), SessionStatus.PAUSED)
+    assert updated_session is None

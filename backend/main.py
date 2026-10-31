@@ -1,10 +1,11 @@
-
 """
 SDK-9 AI Voice Co-Pilot - Backend Gateway
 Owner: Apeksha KT (feature/backend-fastapi - Task W5)
 """
 
-from fastapi import FastAPI, HTTPException
+import logging
+import time
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.sessions import router as session_router
@@ -13,6 +14,8 @@ from backend.schemas.api_schemas import (
     ChatRequest,
 )
 
+logger = logging.getLogger("backend.gateway")
+
 app = FastAPI(
     title="SDK-9 Voicebot API",
     version="1.0.0",
@@ -20,6 +23,27 @@ app = FastAPI(
 )
 
 # Middleware Stack
+# 1. Request logging middleware: logs method, path, status, and response time
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next) -> Response:
+    """
+    Lightweight request logging middleware that records HTTP method,
+    path, response status, and duration in milliseconds.
+    """
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start_time) * 1000.0
+    logger.info(
+        "%s %s - %d (%.2fms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    response.headers["X-Response-Time"] = f"{duration_ms:.2f}ms"
+    return response
+
+# 2. CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -57,11 +81,6 @@ def chat_endpoint(req: ChatRequest):
 
 
 if __name__ == "__main__":
-    import uvicorn
+    from backend.launcher import run_server
 
-    uvicorn.run(
-        "backend.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-    )
+    run_server()
