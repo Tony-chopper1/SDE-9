@@ -50,7 +50,7 @@ Run test coverage report:
 ```bash
 pytest --cov=packages/speech_to_text packages/speech_to_text/tests/
 ```
-*Current test suite: 19 passing tests, **99% code coverage**.*
+*Current test suite: 21 passing tests, **99% code coverage**.*
 
 ---
 
