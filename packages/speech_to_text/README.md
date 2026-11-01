@@ -109,15 +109,17 @@ The module includes a self-contained command-line interface demonstrating live s
 ### Running the CLI Tool:
 
 ```bash
-# 1. Activate the project virtual environment (if not already active):
-source .venv/bin/activate       # On Linux / macOS
-.venv\Scripts\activate          # On Windows
+# 1. Activate the virtual environment (choose your OS):
+.venv\Scripts\activate            # On Windows (CMD)
+.venv\Scripts\Activate.ps1        # On Windows (PowerShell)
+source .venv/bin/activate         # On Linux / macOS
 
 # 2. Run the interactive CLI demo:
 python -m packages.speech_to_text.cli
 
-# Alternatively, run directly using the virtual environment python:
-.venv/bin/python -m packages.speech_to_text.cli
+# Alternatively, run directly without manual activation:
+.venv\Scripts\python.exe -m packages.speech_to_text.cli  # Windows
+.venv/bin/python -m packages.speech_to_text.cli          # Linux / macOS
 ```
 
 ### Example Output:
@@ -146,21 +148,25 @@ Accumulator Output:
 All unit, integration, and stress tests are colocated in `packages/speech_to_text/tests/`.
 
 ### Run Unit & Integration Tests:
+
 ```bash
 # With active venv:
 pytest packages/speech_to_text/tests/ -v
 
-# Or directly:
-.venv/bin/pytest packages/speech_to_text/tests/ -v
+# Or directly without activation:
+.venv\Scripts\pytest.exe packages/speech_to_text/tests/ -v     # Windows
+.venv/bin/pytest packages/speech_to_text/tests/ -v             # Linux / macOS
 ```
 
 ### Run Coverage Analysis:
+
 ```bash
 # With active venv:
 pytest --cov=packages/speech_to_text packages/speech_to_text/tests/
 
-# Or directly:
-.venv/bin/pytest --cov=packages/speech_to_text packages/speech_to_text/tests/
+# Or directly without activation:
+.venv\Scripts\pytest.exe --cov=packages/speech_to_text packages/speech_to_text/tests/  # Windows
+.venv/bin/pytest --cov=packages/speech_to_text packages/speech_to_text/tests/          # Linux / macOS
 ```
 
 ### Test Coverage Report:
