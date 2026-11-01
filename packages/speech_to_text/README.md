@@ -31,6 +31,13 @@ State machine for streaming transcription aggregation:
 - **Interim Overwrite**: Deduplicates and overwrites interim segments when a final version with the same ID arrives.
 - **Memory Leak Protection**: Completely purges internal buffers upon `finalize_utterance()` to ensure zero memory accumulation over long sessions.
 
+### `cli.py`
+Interactive CLI demonstration of real-time streaming speech-to-text:
+```bash
+python -m packages.speech_to_text.cli
+```
+Displays streaming partial phrases, dynamic confidence scores, out-of-order chunk resolution, and the finalized merged utterance.
+
 ---
 
 ## 3. Running Unit Tests & Coverage
@@ -43,7 +50,7 @@ Run test coverage report:
 ```bash
 pytest --cov=packages/speech_to_text packages/speech_to_text/tests/
 ```
-*Current test suite: 15 passing tests, **99% code coverage**.*
+*Current test suite: 19 passing tests, **99% code coverage**.*
 
 ---
 
