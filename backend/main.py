@@ -72,7 +72,10 @@ def health_check():
 @app.post("/api/v1/ai/chat", response_model=StandardResponse)
 def chat_endpoint(req: ChatRequest):
     """
-    TODO: Implement chat integration with the reasoning module.
+    Handle incoming AI chat requests.
+
+    Chat processing will be connected to the context reasoning
+    module once its shared interface is ready.
     """
     raise HTTPException(
         status_code=501,
