@@ -118,18 +118,30 @@ def test_event_envelope_field_parity():
 
 
 def test_node_runs_typescript_validation():
-    """Verify Node 24 native type stripping executes test_types.ts without error."""
-    # Locate node binary
+    """Verify Node 22+ native type stripping executes test_types.ts without error."""
     node_bin = shutil.which("node")
     if not node_bin:
-        winget_node = Path(
-            r"C:\Users\SATWIK\AppData\Local\Microsoft\WinGet\Packages\OpenJS.NodeJS.LTS_Microsoft.Winget.Source_8wekyb3d8bbwe\node-v24.19.0-win-x64\node.exe"
-        )
-        if winget_node.exists():
-            node_bin = str(winget_node)
-
-    if not node_bin:
         pytest.skip("Node.js binary not available in this environment")
+
+    # Check Node version (strip-types requires Node >= 22)
+    version_res = subprocess.run(
+        [node_bin, "--version"],
+        capture_output=True,
+        text=True,
+    )
+
+    try:
+        major_version = int(
+            version_res.stdout.strip().lstrip("v").split(".")[0]
+        )
+    except (ValueError, IndexError):
+        major_version = 0
+
+    if major_version < 22:
+        pytest.skip(
+            f"Node {version_res.stdout.strip()} does not support "
+            "--experimental-strip-types (requires Node >= 22)"
+        )
 
     test_script = Path(__file__).resolve().parent / "test_types.ts"
     assert test_script.exists()
