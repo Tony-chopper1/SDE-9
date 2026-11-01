@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { TranscriptSegment } from '../api_client';
 
@@ -5,27 +6,30 @@ export interface TranscriptTimelineProps {
   segments: TranscriptSegment[];
 }
 
-export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({ segments }) => {
+export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
+  segments,
+}) => {
   return (
-    <section aria-label="Speech Transcript Timeline" tabIndex={0} style={{ maxHeight: '350px', overflowY: 'auto' }}>
+    <section
+      className="timeline"
+      aria-label="Speech Transcript Timeline"
+      tabIndex={0}
+    >
       {segments.length === 0 ? (
-        <p style={{ color: '#777' }}>No spoken segments detected yet.</p>
+        <p className="empty-transcript">
+          Your transcript will appear here once you start speaking...
+        </p>
       ) : (
-        <ul style={{ listStyleType: 'none', padding: 0 }}>
+        <ul>
           {segments.map((seg) => (
-            <li
-              key={seg.id}
-              style={{
-                padding: '8px',
-                borderBottom: '1px solid #e0e0e0',
-                backgroundColor: seg.is_final ? '#fff' : '#f9f9f9',
-              }}
-            >
-              <span style={{ fontSize: '11px', color: '#666' }}>
+            <li key={seg.id}>
+              <span className="segment-time">
                 [{Math.floor(seg.start_time)}s - {Math.floor(seg.end_time)}s]
-              </span>{' '}
-              <strong>{seg.text}</strong>
-              {!seg.is_final && <em style={{ fontSize: '11px', color: '#888' }}> (interim)</em>}
+              </span>
+              <p>{seg.text}</p>
+              {!seg.is_final && (
+                <span className="interim-label">Listening...</span>
+              )}
             </li>
           ))}
         </ul>
