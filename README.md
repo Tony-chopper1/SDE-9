@@ -76,7 +76,7 @@ SDK-9/
 │
 ├── packages/                              # Core Python Micro-Packages
 │   │
-│   ├── audio/                             # Audio Capture & VAD (Satwik A)
+│   ├── audio/                             # Audio Capture & VAD (Satwik A - Team Lead)
 │   │   ├── mock_mic.py                    # 16-bit PCM streaming microphone simulator
 │   │   ├── vad.py                         # Energy-based & simple Voice Activity Detectors
 │   │   ├── cli.py                         # Real-time ASCII audio meter CLI demo
@@ -85,7 +85,7 @@ SDK-9/
 │   │   ├── README.md                      # Audio pipeline documentation
 │   │   └── tests/                         # Isolated audio unit & stress tests
 │   │
-│   ├── speech_to_text/                    # Speech-to-Text & Accumulator (Pavanchand RM - Lead)
+│   ├── speech_to_text/                    # Speech-to-Text & Accumulator (Pavanchand RM)
 │   │   ├── fake_transcriber.py            # Simulated STT & dynamic confidence scoring
 │   │   ├── accumulator.py                 # Streaming chunk accumulator state machine
 │   │   ├── cli.py                         # Live streaming transcription CLI demo
@@ -130,8 +130,8 @@ SDK-9/
 
 | Member | Responsibility | Package Path | Feature Branch |
 | :--- | :--- | :--- | :--- |
-| **Pavanchand RM** *(Team Lead)* | Speech-to-Text & Segment Accumulator | `packages/speech_to_text/` | `feature/speech-to-text` |
-| **Satwik A** | Audio Capture & Voice Activity Detection | `packages/audio/` | `feature/audio-vad` |
+| **Satwik A** *(Team Lead)* | Audio Capture & Voice Activity Detection | `packages/audio/` | `feature/audio-vad` |
+| **Pavanchand RM** | Speech-to-Text & Segment Accumulator | `packages/speech_to_text/` | `feature/speech-to-text` |
 | **Chiranthan RK** | Agentic Workflow & Mock Tool Execution | `packages/agentic_workflow/` | `feature/agentic-workflow` |
 | **Apeksha KT** | Backend Gateway, Sessions & Launcher | `backend/` | `feature/backend-fastapi` |
 | **Spoorthi V** | Frontend UI, AppShell & Virtualized Timeline | `frontend/` | `feature/frontend` |
