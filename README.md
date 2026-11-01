@@ -1,59 +1,250 @@
-# SDE-9 — AcademiaAI AI Voicebot
+# SDK-9 — AcademiaAI Voicebot & Voice Co-Pilot
 
-## Project Overview
+> **Team SDE-9** · Final Delivery: `projects/sde-9-voicebot/` (Branch: `team/sde-9-voicebot`)  
+> Comprehensive voice-driven AI co-pilot designed for real-time speech interaction, contextual screen reasoning, multi-step agentic workflows, and safe action execution.
 
-SDK-9 is a six-member team project that develops an AI Voicebot using modular components. The application must support mock mode without requiring paid API credentials.
+---
 
-## Technology Stack
+## 🏛️ High-Level System Architecture
 
-- Backend: Python and FastAPI
-- Frontend: React and TypeScript
-- Version control: Git and GitHub
-- Testing: Automated unit and integration tests
+```mermaid
+flowchart TD
+    subgraph Client["Frontend Client (React 18 + TypeScript)"]
+        UI["Voice Studio UI\n(AppShell, Waveform, Virtualized Timeline)"]
+        ClientAPI["Typed API Client\n(Zero 'any' Types)"]
+        UI --> ClientAPI
+    end
 
-## Team Modules
+    subgraph Gateway["Backend Gateway (FastAPI)"]
+        Server["FastAPI REST & WebSocket Gateway\n(CORS, Latency Logging Middleware)"]
+        Sessions["Session Management Service\n(/api/v1/sessions CRUD)"]
+        Launcher["Service Launcher & Config Orchestrator\n(backend/launcher.py)"]
+        Server --> Sessions
+    end
 
-|     Member    |     Responsibility    |       Feature Branch      |
-|---------------|-----------------------|---------------------------|
-|    Satwik A   |     Audio and VAD     |     feature/audio-vad     |
-| Pavanchand RM |     Speech-to-Text    |  feature/speech-to-text   |
-| Praveen Kumar | Context and Reasoning | feature/context-reasoning |
-| Chiranthan Rk |    Agentic Workflow   | feature/agentic-workflow  |
-|   Apeksha KT  |         Backend       |  feature/backend-fastapi  |
-|   Spoorthi V  |         Frontend      |     feature/frontend      |
+    subgraph AudioPipeline["Audio & Speech Pipeline"]
+        Mic["Mock Microphone Source\n(16kHz 16-bit Mono PCM)"] -->|"AudioFrame Stream"| VAD["Voice Activity Detection\n(Energy & Simple VAD)"]
+        VAD -->|"Speech Activity Events"| STT["Speech-to-Text Engine\n(FakeTranscriber & Confidence Scorer)"]
+        STT -->|"Partial & Final Segments"| Accumulator["Segment Accumulator State Machine\n(Out-of-Order Sorting, 0 Leaks)"]
+    end
 
-## Repository Structure
+    subgraph Intelligence["Cognitive & Agentic Workflow Engine"]
+        Context["Context Manager\n(Active Window, Snippets, Turn History)"]
+        Prompt["Versioned Prompt Manager\n(Template Registry & Substitution)"]
+        Reasoning["Mock Reasoning Engine\n(Intent Classification & Tool Triggering)"]
+        Workflow["Agentic Workflow State Machine\n(Safety Gates: Levels A, B, C, D)"]
+        Tools["Mock Tool Executor\n(file.search, file.move, calc.evaluate)"]
+        
+        Context --> Reasoning
+        Prompt --> Reasoning
+        Reasoning --> Workflow
+        Workflow -->|"Execute Action"| Tools
+    end
 
-- `docs/` — Architecture, integration contracts and development workflow
-- `packages/audio/` — Audio processing and VAD
-- `packages/speech-to-text/` — Speech transcription
-- `packages/context-reasoning/` — Context and reasoning
-- `packages/agentic-workflow/` — Workflow execution
-- `backend/` — FastAPI application
-- `frontend/` — React and TypeScript application
-- `tests/` — Automated tests
+    ClientAPI <-->|"HTTP / REST"| Server
+    Accumulator -->|"Synthesized Utterance"| Context
+    Workflow -->|"Action Plan & Status"| Server
+```
 
-## Branch Strategy
+---
 
-- `main` — Stable, tested releases
-- `develop` — Shared integration branch
-- `feature/*` — Individual development branches
+## 📁 Monorepo Directory Structure
 
-Do not push feature work directly to `main` or `develop`. Submit pull requests targeting `develop` and follow the review process documented in `docs/development-workflow.md`.
+```
+SDK-9/
+├── backend/                               # FastAPI Backend Gateway (Apeksha KT)
+│   ├── api/                               # Session endpoints (/api/v1/sessions)
+│   ├── schemas/                           # Pydantic request & response schemas
+│   ├── services/                          # In-memory session management service
+│   ├── launcher.py                        # Service orchestrator (env & CLI flags)
+│   ├── main.py                            # ASGI entrypoint with request logging
+│   ├── README.md                          # Backend architecture & API documentation
+│   └── tests/                             # Isolated backend test suite (98% coverage)
+│
+├── frontend/                              # Accessible React 18 UI (Spoorthi V)
+│   ├── src/
+│   │   ├── components/                    # AppShell, VoiceControls, TranscriptTimeline
+│   │   ├── hooks/                         # useVoiceRecorder custom Web Speech hook
+│   │   ├── api_client.ts                  # Strictly-typed API client (zero 'any')
+│   │   ├── App.tsx                        # Enterprise Studio workspace
+│   │   └── styles.css                     # Responsive WCAG 2.1 AA styling
+│   ├── src/__tests__/                     # Vitest component & hook test suite (88% coverage)
+│   ├── ACCESSIBILITY.md                   # Full WCAG 2.1 AA compliance audit report
+│   ├── package.json                       # Frontend scripts & dependencies
+│   ├── README.md                          # Frontend setup & architecture guide
+│   └── vite.config.ts                     # Vite build & bundler configuration
+│
+├── packages/                              # Core Python Micro-Packages
+│   │
+│   ├── audio/                             # Audio Capture & VAD (Satwik A)
+│   │   ├── mock_mic.py                    # 16-bit PCM streaming microphone simulator
+│   │   ├── vad.py                         # Energy-based & simple Voice Activity Detectors
+│   │   ├── cli.py                         # Real-time ASCII audio meter CLI demo
+│   │   ├── models.py / schemas.py         # AudioConfig, AudioFrame, VADResult schemas
+│   │   ├── types.ts                       # TypeScript audio definitions
+│   │   ├── README.md                      # Audio pipeline documentation
+│   │   └── tests/                         # Isolated audio unit & stress tests (96% coverage)
+│   │
+│   ├── speech_to_text/                    # Speech-to-Text & Accumulator (Pavanchand RM - Lead)
+│   │   ├── fake_transcriber.py            # Simulated STT & dynamic confidence scoring
+│   │   ├── accumulator.py                 # Streaming chunk accumulator state machine
+│   │   ├── cli.py                         # Live streaming transcription CLI demo
+│   │   ├── models.py                      # TranscriptSegment & AccumulatedUtterance models
+│   │   ├── types.ts                       # TypeScript speech interfaces
+│   │   ├── README.md                      # STT architecture & pipeline documentation
+│   │   └── tests/                         # STT unit, integration & memory tests (99% coverage)
+│   │
+│   ├── context_reasoning/                 # Context & Reasoning (Praveen Kumar)
+│   │   ├── context_manager.py             # Active window, screen & turn history manager
+│   │   ├── prompt_manager.py              # Versioned prompt template registry
+│   │   ├── mock_reasoning.py              # LLM intent classification & tool decision service
+│   │   ├── models.py                      # ConversationContext & WindowContext schemas
+│   │   ├── types.ts                       # TypeScript context definitions
+│   │   ├── README.md                      # Context engine documentation
+│   │   └── tests/                         # Isolated context reasoning tests
+│   │
+│   └── agentic_workflow/                  # Workflow & Tool Execution (Chiranthan RK)
+│       ├── state_machine.py               # Multi-step decision FSM with safety gates (A–D)
+│       ├── mock_executor.py               # Safe tool executor (file.search, file.move, calc)
+│       ├── models.py                      # ActionPlan, WorkflowStep, ToolResult models
+│       ├── types.ts                       # TypeScript workflow interfaces
+│       ├── README.md                      # State machine transition & safety docs
+│       └── tests/                         # Workflow unit & integration tests (126 tests, 99% coverage)
+│
+├── docs/                                  # Team Specifications & Contracts
+│   ├── architecture.md                    # Core architectural standards
+│   ├── integration-contracts.md           # Inter-module data contract definitions
+│   └── development-workflow.md            # Git branching rules & PR checklist
+│
+├── tests/                                 # End-to-End Test Suite
+│   ├── integration/                       # Reserved for Week 4 cross-module pipelines
+│   └── README.md                          # Testing philosophy & isolation strategy
+│
+├── pyproject.toml                         # Monorepo build & package discovery configuration
+└── requirements.txt                       # Python dependencies (FastAPI, Pydantic, Pytest, Uvicorn)
+```
 
-## Getting Started
+---
 
-1. Clone the repository.
-2. Configure your Git identity.
-3. Update your local `develop` branch.
-4. Create or switch to your assigned feature branch.
-5. Follow the module-specific setup instructions once they are documented.
-6. Run relevant tests before committing and pushing changes.
+## 👥 Team Members & Module Ownership
 
-## Shared Contracts
+| Member | Responsibility | Feature Branch | Test Coverage |
+| :--- | :--- | :--- | :---: |
+| **Pavanchand RM** *(Team Lead)* | Speech-to-Text & Segment Accumulator | `feature/speech-to-text` | **99%** |
+| **Satwik A** | Audio Capture & Voice Activity Detection | `feature/audio-vad` | **96%** |
+| **Chiranthan RK** | Agentic Workflow & Mock Tool Execution | `feature/agentic-workflow` | **99%** |
+| **Apeksha KT** | Backend Gateway, Sessions & Launcher | `feature/backend-fastapi` | **98%** |
+| **Spoorthi V** | Frontend UI, AppShell & Virtualized Timeline | `feature/frontend` | **88%** |
+| **Praveen Kumar** | Context Tracking & Versioned Reasoning | `feature/context-reasoning` | In Progress |
 
-Read `docs/architecture.md`, `docs/integration-contracts.md`, and `docs/development-workflow.md` before implementing module interfaces.
+---
 
-## Security
+## ⚡ Quickstart Guide
 
-Never commit API keys, `.env` files, private recordings, or personal data. Use mock mode for development when real provider credentials are unavailable.
+### 1. Prerequisites
+- **Python**: Version 3.10+ (Recommended: Python 3.12)
+- **Node.js**: Version 18+ (Recommended: Node 20 LTS)
+
+### 2. Environment Setup
+
+#### Clone the Repository:
+```bash
+git clone https://github.com/Tony-chopper1/SDK-9.git
+cd SDK-9
+```
+
+#### Python Virtual Environment Setup:
+```bash
+# Create virtual environment:
+python3 -m venv .venv
+
+# Activate virtual environment:
+source .venv/bin/activate       # On Linux / macOS
+.venv\Scripts\activate          # On Windows (CMD)
+.venv\Scripts\Activate.ps1      # On Windows (PowerShell)
+
+# Install dependencies in editable mode:
+pip install -r requirements.txt
+pip install -e .
+```
+
+#### Frontend Dependencies:
+```bash
+cd frontend
+npm ci
+cd ..
+```
+
+---
+
+## 🚀 Running the Services
+
+### A. Start the Backend Gateway
+```bash
+# Using the dedicated service launcher:
+python backend/launcher.py --port 8000 --reload
+
+# Or directly with Uvicorn:
+uvicorn backend.main:app --reload --port 8000
+```
+- **API Health**: `http://localhost:8000/api/v1/health`
+- **Interactive Swagger Docs**: `http://localhost:8000/docs`
+
+### B. Start the Frontend Studio
+```bash
+cd frontend
+npm run dev
+```
+Open your browser at **`http://localhost:5173`** to access the voice studio interface.
+
+### C. Run Standalone CLI Demos
+Each micro-package provides an interactive terminal demonstration:
+
+```bash
+# Speech-to-Text & Streaming Accumulator Demo:
+python -m packages.speech_to_text.cli
+
+# Audio Capture & VAD Meter Demo:
+python -m packages.audio.cli --iterations 10
+```
+
+---
+
+## 🧪 Automated Testing Strategy
+
+To ensure zero merge conflicts during parallel feature development, all unit tests are colocated within their respective module directories:
+
+### Run Isolated Package Tests:
+```bash
+# Speech-to-Text:
+pytest packages/speech_to_text/tests/ -v
+
+# Audio & VAD:
+pytest packages/audio/tests/ -v
+
+# Agentic Workflow:
+pytest packages/agentic_workflow/tests/ -v
+
+# Backend Gateway:
+pytest backend/tests/ -v
+
+# Frontend Vitest Suite:
+cd frontend && npm test -- --run
+```
+
+### Run Full Repository Test Suite:
+```bash
+pytest
+```
+*Currently passing **170+ tests** with comprehensive code coverage across all core modules.*
+
+---
+
+## 🌿 Git & Branching Strategy
+
+- **`main`**: Production-ready, stable milestone releases.
+- **`develop`**: Central integration branch for all verified feature PRs.
+- **`feature/*`**: Individual developer branches created from `develop`.
+
+> [!IMPORTANT]
+> Never push directly to `develop` or `main`. All contributions must be submitted via Pull Requests targeting `develop` after passing all local test suites.
