@@ -59,7 +59,7 @@ SDK-9/
 │   ├── launcher.py                        # Service orchestrator (env & CLI flags)
 │   ├── main.py                            # ASGI entrypoint with request logging
 │   ├── README.md                          # Backend architecture & API documentation
-│   └── tests/                             # Isolated backend test suite (98% coverage)
+│   └── tests/                             # Backend unit and integration tests
 │
 ├── frontend/                              # Accessible React 18 UI (Spoorthi V)
 │   ├── src/
@@ -68,7 +68,7 @@ SDK-9/
 │   │   ├── api_client.ts                  # Strictly-typed API client (zero 'any')
 │   │   ├── App.tsx                        # Enterprise Studio workspace
 │   │   └── styles.css                     # Responsive WCAG 2.1 AA styling
-│   ├── src/__tests__/                     # Vitest component & hook test suite (88% coverage)
+│   ├── src/__tests__/                     # Vitest component & hook test suite
 │   ├── ACCESSIBILITY.md                   # Full WCAG 2.1 AA compliance audit report
 │   ├── package.json                       # Frontend scripts & dependencies
 │   ├── README.md                          # Frontend setup & architecture guide
@@ -83,7 +83,7 @@ SDK-9/
 │   │   ├── models.py / schemas.py         # AudioConfig, AudioFrame, VADResult schemas
 │   │   ├── types.ts                       # TypeScript audio definitions
 │   │   ├── README.md                      # Audio pipeline documentation
-│   │   └── tests/                         # Isolated audio unit & stress tests (96% coverage)
+│   │   └── tests/                         # Isolated audio unit & stress tests
 │   │
 │   ├── speech_to_text/                    # Speech-to-Text & Accumulator (Pavanchand RM - Lead)
 │   │   ├── fake_transcriber.py            # Simulated STT & dynamic confidence scoring
@@ -92,7 +92,7 @@ SDK-9/
 │   │   ├── models.py                      # TranscriptSegment & AccumulatedUtterance models
 │   │   ├── types.ts                       # TypeScript speech interfaces
 │   │   ├── README.md                      # STT architecture & pipeline documentation
-│   │   └── tests/                         # STT unit, integration & memory tests (99% coverage)
+│   │   └── tests/                         # STT unit, integration & memory tests
 │   │
 │   ├── context_reasoning/                 # Context & Reasoning (Praveen Kumar)
 │   │   ├── context_manager.py             # Active window, screen & turn history manager
@@ -109,7 +109,7 @@ SDK-9/
 │       ├── models.py                      # ActionPlan, WorkflowStep, ToolResult models
 │       ├── types.ts                       # TypeScript workflow interfaces
 │       ├── README.md                      # State machine transition & safety docs
-│       └── tests/                         # Workflow unit & integration tests (126 tests, 99% coverage)
+│       └── tests/                         # Workflow unit & integration tests
 │
 ├── docs/                                  # Team Specifications & Contracts
 │   ├── architecture.md                    # Core architectural standards
@@ -128,14 +128,14 @@ SDK-9/
 
 ## 👥 Team Members & Module Ownership
 
-| Member | Responsibility | Feature Branch | Test Coverage |
-| :--- | :--- | :--- | :---: |
-| **Pavanchand RM** *(Team Lead)* | Speech-to-Text & Segment Accumulator | `feature/speech-to-text` | **99%** |
-| **Satwik A** | Audio Capture & Voice Activity Detection | `feature/audio-vad` | **96%** |
-| **Chiranthan RK** | Agentic Workflow & Mock Tool Execution | `feature/agentic-workflow` | **99%** |
-| **Apeksha KT** | Backend Gateway, Sessions & Launcher | `feature/backend-fastapi` | **98%** |
-| **Spoorthi V** | Frontend UI, AppShell & Virtualized Timeline | `feature/frontend` | **88%** |
-| **Praveen Kumar** | Context Tracking & Versioned Reasoning | `feature/context-reasoning` | In Progress |
+| Member | Responsibility | Package Path | Feature Branch |
+| :--- | :--- | :--- | :--- |
+| **Pavanchand RM** *(Team Lead)* | Speech-to-Text & Segment Accumulator | `packages/speech_to_text/` | `feature/speech-to-text` |
+| **Satwik A** | Audio Capture & Voice Activity Detection | `packages/audio/` | `feature/audio-vad` |
+| **Chiranthan RK** | Agentic Workflow & Mock Tool Execution | `packages/agentic_workflow/` | `feature/agentic-workflow` |
+| **Apeksha KT** | Backend Gateway, Sessions & Launcher | `backend/` | `feature/backend-fastapi` |
+| **Spoorthi V** | Frontend UI, AppShell & Virtualized Timeline | `frontend/` | `feature/frontend` |
+| **Praveen Kumar** | Context Tracking & Versioned Reasoning | `packages/context_reasoning/` | `feature/context-reasoning` |
 
 ---
 
