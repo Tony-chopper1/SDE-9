@@ -1,9 +1,6 @@
 """
 Unit Tests for Backend API Gateway
 Assigned Member: Apeksha KT (feature/backend-fastapi - Task W5)
-
-TODO (Apeksha KT):
-Write unit tests for FastAPI endpoints (health, sessions, chat) to achieve >80% coverage.
 """
 from fastapi.testclient import TestClient
 from backend.main import app
@@ -18,10 +15,15 @@ def test_health_check_endpoint():
     data = response.json()
     assert data["success"] is True
     assert data["data"]["status"] == "healthy"
+    # Verify request logging middleware attached the response time header
+    assert "X-Response-Time" in response.headers
 
 
-# TODO (Apeksha KT): Uncomment and implement after implementing routes in backend/main.py
-# def test_create_and_get_session():
-#     res = client.post("/api/v1/sessions", json={})
-#     assert res.status_code == 201
-#     ...
+def test_chat_endpoint_pending():
+    """Verify that chat endpoint returns 501 Not Implemented."""
+    response = client.post(
+        "/api/v1/ai/chat",
+        json={"session_id": "session-123", "message": "Hello AI voicebot"},
+    )
+    assert response.status_code == 501
+    assert "Chat endpoint implementation pending" in response.json()["detail"]
