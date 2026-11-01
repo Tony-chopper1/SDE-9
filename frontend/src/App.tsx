@@ -4,9 +4,10 @@ import { VoiceControls } from './components/VoiceControls';
 import { TranscriptTimeline } from './components/TranscriptTimeline';
 import { SessionHistory } from './components/SessionHistory';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { TranscriptSegment } from './api_client';
+import { TranscriptSegment, TypedVoicebotClient } from './api_client';
 import { RecordingSession } from './types/speech';
 import { useVoiceRecorder } from './hooks/useVoiceRecorder';
+import { EngineStatusData } from './components/EngineStatusPanel';
 
 const STORAGE_KEY = 'academia-voice-history';
 const LEGACY_STORAGE_KEY = 'echo-recording-history';
@@ -15,6 +16,53 @@ export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'studio' | 'transcripts' | 'history'>('studio');
   const [recordingHistory, setRecordingHistory] = useState<RecordingSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+
+  // Engine status reported by backend health check and voice runtime
+  const [engineStatus, setEngineStatus] = useState<EngineStatusData>({
+    engineName: null,
+    latencyMs: null,
+    speechApiStatus: 'unknown',
+    speechApiLabel: 'Not reported',
+    backendStatus: 'unknown',
+  });
+
+  // Query backend health to retrieve actual engine name and measured round-trip latency
+  useEffect(() => {
+    let isMounted = true;
+    const client = new TypedVoicebotClient();
+
+    const fetchEngineHealth = async () => {
+      try {
+        const startTime = performance.now();
+        const res = await client.checkHealth();
+        const latency = Math.round(performance.now() - startTime);
+
+        if (isMounted) {
+          const isHealthy = res.data?.status === 'healthy';
+          setEngineStatus((prev) => ({
+            ...prev,
+            engineName: res.data?.service || null,
+            latencyMs: latency,
+            backendStatus: isHealthy ? 'online' : 'unknown',
+          }));
+        }
+      } catch {
+        if (isMounted) {
+          setEngineStatus((prev) => ({
+            ...prev,
+            engineName: null,
+            latencyMs: null,
+            backendStatus: 'offline',
+          }));
+        }
+      }
+    };
+
+    fetchEngineHealth();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Active timeline segments for visualization
   const [segments, setSegments] = useState<TranscriptSegment[]>([
@@ -185,11 +233,38 @@ export const AppContent: React.FC = () => {
     return segments;
   }, [selectedSession, isRecording, liveTranscript, segments]);
 
+  // Derive Speech API status from live voice recorder runtime state
+  const computedEngineStatus = useMemo<EngineStatusData>(() => {
+    let speechApiStatus: 'online' | 'offline' | 'unknown' = 'unknown';
+    let speechApiLabel = 'Not reported';
+
+    if (isRecording) {
+      speechApiStatus = 'online';
+      speechApiLabel = 'Active';
+    } else if (
+      errorMessage &&
+      (errorMessage.toLowerCase().includes('microphone') ||
+       errorMessage.toLowerCase().includes('speech recognition'))
+    ) {
+      speechApiStatus = 'offline';
+      speechApiLabel = 'Offline';
+    }
+
+    return {
+      ...engineStatus,
+      speechApiStatus,
+      speechApiLabel,
+    };
+  }, [engineStatus, isRecording, errorMessage]);
+
+  const isServiceOnline = computedEngineStatus.backendStatus !== 'offline';
+
   return (
     <AppShell
       activeTab={activeTab}
       onTabChange={setActiveTab}
-      serviceOnline={true}
+      serviceOnline={isServiceOnline}
+      engineStatus={computedEngineStatus}
     >
       {/* Enterprise Hero Banner */}
       <section className="hero-banner" aria-label="Overview Banner">

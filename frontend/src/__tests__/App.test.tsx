@@ -90,6 +90,21 @@ describe('App Component', () => {
 
     // Prevent JSDOM navigation error on download link click
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    // Mock global fetch for health check
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: {
+          status: 'healthy',
+          service: 'sdk-9-voicebot',
+          mock_mode: true,
+        },
+        timestamp: Date.now(),
+      }),
+    } as Response);
   });
 
   afterEach(() => {
@@ -98,7 +113,7 @@ describe('App Component', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders enterprise brand, navigation, and initial state', () => {
+  it('renders enterprise brand, navigation, and initial state', async () => {
     render(<App />);
 
     expect(screen.getByText('AcademiaAI')).toBeTruthy();
@@ -112,6 +127,10 @@ describe('App Component', () => {
     expect(
       screen.getByRole('menuitem', { name: /Session History/i })
     ).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
   });
 
   it('toggles recording state when capture button is clicked', async () => {
@@ -174,6 +193,10 @@ describe('App Component', () => {
 
     render(<App />);
 
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
+
     // Session should be visible in history list
     expect(screen.getByText('Previously saved transcript test content.')).toBeTruthy();
 
@@ -221,7 +244,7 @@ describe('App Component', () => {
     });
   });
 
-  it('handles transcript download action', () => {
+  it('handles transcript download action', async () => {
     render(<App />);
 
     const createObjectURLSpy = vi.fn().mockReturnValue('blob:mock-url');
@@ -236,9 +259,13 @@ describe('App Component', () => {
     fireEvent.click(exportBtn);
 
     expect(createObjectURLSpy).toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
   });
 
-  it('allows navigating between workspace sidebar tabs', () => {
+  it('allows navigating between workspace sidebar tabs', async () => {
     render(<App />);
 
     const historyTab = screen.getByRole('menuitem', { name: /Session History/i });
@@ -246,5 +273,22 @@ describe('App Component', () => {
 
     expect(historyTab.getAttribute('aria-current')).toBe('page');
     expect(screen.getByText('RECORDING HISTORY')).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
+  });
+
+  it('displays the Engine Status panel inside the sidebar with live health data', async () => {
+    render(<App />);
+
+    expect(screen.getByText('ENGINE STATUS')).toBeTruthy();
+    expect(screen.getByText('Engine')).toBeTruthy();
+    expect(screen.getByText('Latency')).toBeTruthy();
+    expect(screen.getByText('Speech API')).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
   });
 });
