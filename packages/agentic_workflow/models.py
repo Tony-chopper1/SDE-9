@@ -1,9 +1,4 @@
-"""
-Pydantic models for the Agentic Workflow & Tool Executor module.
 
-Defines safety classification enums, agent lifecycle states, workflow data
-structures, and tool result contracts used throughout the agentic pipeline.
-"""
 
 from __future__ import annotations
 
