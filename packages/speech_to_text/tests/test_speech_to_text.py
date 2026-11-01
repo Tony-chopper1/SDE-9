@@ -278,6 +278,63 @@ class TestSegmentAccumulator:
         assert acc.current_segments == []
 
 
+class TestAudioPipelineIntegration:
+    """
+    Integration tests linking audio streaming frames to STT transcription and segment accumulation.
+    Fulfills Day 3-4 and Day 5-6 ClickUp requirements:
+    - 'Integrate with audio pipeline'
+    - 'Integration tests with audio/accumulator'
+    - 'Edge case testing (overlaps, gaps)'
+    """
+    def test_audio_stream_to_accumulator_pipeline(self):
+        transcriber = FakeTranscriberService()
+        accumulator = SegmentAccumulator(session_id="audio-integ-001")
+
+        # Simulate continuous audio chunks (e.g. 100ms PCM frames at 16kHz)
+        audio_frame_size = 3200
+        for idx in range(3):
+            pcm_data = b"\x10\x00" * (audio_frame_size // 2)
+            segments = transcriber.transcribe(
+                audio_data=pcm_data,
+                phrase_index=idx,
+                start_time_offset=idx * 2.0,
+            )
+            assert len(segments) == 1
+            accumulator.add_segment(segments[0])
+
+        assert accumulator.count == 3
+        assert accumulator.state == AccumulatorState.ACCUMULATING
+
+        utterance = accumulator.finalize_utterance()
+        assert len(utterance.segments) == 3
+        assert utterance.duration >= 2.0
+        assert accumulator.state == AccumulatorState.IDLE
+
+    def test_accumulator_handles_overlapping_and_gaps(self):
+        """
+        Verify that overlapping timestamps and time gaps are properly handled.
+        Fulfills Acceptance Criteria: 'Accumulator handles overlapping timestamps'
+        """
+        accumulator = SegmentAccumulator(session_id="overlap-test")
+
+        # Chunk 1: 0.0s -> 2.0s
+        seg1 = TranscriptSegment(id="seg-1", text="First phrase", start_time=0.0, end_time=2.0, is_final=True)
+        # Chunk 2 overlaps Chunk 1: 1.5s -> 3.5s
+        seg2 = TranscriptSegment(id="seg-2", text="Overlapping phrase", start_time=1.5, end_time=3.5, is_final=True)
+        # Chunk 3 with gap: 5.0s -> 7.0s
+        seg3 = TranscriptSegment(id="seg-3", text="After gap phrase", start_time=5.0, end_time=7.0, is_final=True)
+
+        accumulator.add_segment(seg2)
+        accumulator.add_segment(seg1)
+        accumulator.add_segment(seg3)
+
+        assert [s.id for s in accumulator.current_segments] == ["seg-1", "seg-2", "seg-3"]
+        utterance = accumulator.finalize_utterance()
+        assert "First phrase" in utterance.full_text
+        assert "Overlapping phrase" in utterance.full_text
+        assert "After gap phrase" in utterance.full_text
+
+
 def test_cli_demo_execution(capsys):
     """Verifies that the CLI demonstration runs without errors."""
     from packages.speech_to_text.cli import run_demo
