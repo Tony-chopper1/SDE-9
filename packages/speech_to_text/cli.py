@@ -1,9 +1,8 @@
 """
-CLI Demo for Speech-to-Text & Segment Accumulator
-Owner: Pavanchand R M (feature/speech-to-text - Team Lead)
+SDK-9 AI Voice Co-Pilot - Speech-to-Text & Segment Accumulator CLI Demo
 
-Run this tool to see live simulated streaming transcription,
-confidence scoring, and segment accumulation in your terminal.
+Interactive tool demonstrating real-time simulated streaming transcription,
+dynamic confidence scoring, out-of-order chunk resolution, and segment accumulation.
 """
 import time
 import sys

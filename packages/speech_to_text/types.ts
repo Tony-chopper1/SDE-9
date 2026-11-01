@@ -1,9 +1,8 @@
 /**
  * TypeScript Type Definitions for Speech-to-Text Module
- * Owner: Pavanchand R M (feature/speech-to-text - Task W2)
  * 
- * Fulfills deliverable: "Create TypeScript type definitions"
- * Shared with Frontend (Spoorthi V - W6) for full compile-time type safety without 'any'.
+ * Fulfills ClickUp deliverable: "Transcript Schemas: TypeScript definitions"
+ * Shared with Frontend for full compile-time type safety without 'any'.
  */
 
 export type AccumulatorState = 'IDLE' | 'ACCUMULATING' | 'PAUSED' | 'FINALIZED';
