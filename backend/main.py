@@ -2,16 +2,19 @@
 SDK-9 AI Voice Co-Pilot - Backend Gateway
 Owner: Apeksha KT (feature/backend-fastapi - Task W5)
 """
-from typing import Dict
-from fastapi import FastAPI, HTTPException, status
+
+import logging
+import time
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+
+from backend.api.sessions import router as session_router
 from backend.schemas.api_schemas import (
     StandardResponse,
-    CreateSessionRequest,
-    SessionData,
     ChatRequest,
-    ChatResponseData,
 )
+
+logger = logging.getLogger("backend.gateway")
 
 app = FastAPI(
     title="SDK-9 Voicebot API",
@@ -20,6 +23,27 @@ app = FastAPI(
 )
 
 # Middleware Stack
+# 1. Request logging middleware: logs method, path, status, and response time
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next) -> Response:
+    """
+    Lightweight request logging middleware that records HTTP method,
+    path, response status, and duration in milliseconds.
+    """
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start_time) * 1000.0
+    logger.info(
+        "%s %s - %d (%.2fms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    response.headers["X-Response-Time"] = f"{duration_ms:.2f}ms"
+    return response
+
+# 2. CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,8 +52,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory session store
-sessions_db: Dict[str, SessionData] = {}
+# Session management routes
+app.include_router(session_router)
 
 
 @app.get("/api/v1/health", response_model=StandardResponse)
@@ -37,39 +61,26 @@ def health_check():
     """Health check endpoint."""
     return StandardResponse(
         success=True,
-        data={"status": "healthy", "service": "sdk-9-voicebot", "mock_mode": True},
+        data={
+            "status": "healthy",
+            "service": "sdk-9-voicebot",
+            "mock_mode": True,
+        },
     )
-
-
-# ----------------------------------------------------------------------
-# TODO (Apeksha KT - Task W5):
-# Complete the route implementations below and add middleware/launcher.
-# ----------------------------------------------------------------------
-
-@app.post("/api/v1/sessions", response_model=StandardResponse, status_code=status.HTTP_201_CREATED)
-def create_session(req: CreateSessionRequest):
-    """
-    TODO: Apeksha KT - Generate a new session_id, store in sessions_db, and return standard response.
-    """
-    raise HTTPException(status_code=501, detail="TODO: Apeksha KT to implement create_session")
-
-
-@app.get("/api/v1/sessions/{session_id}", response_model=StandardResponse)
-def get_session(session_id: str):
-    """
-    TODO: Apeksha KT - Retrieve session from sessions_db or return 404 if not found.
-    """
-    raise HTTPException(status_code=501, detail="TODO: Apeksha KT to implement get_session")
 
 
 @app.post("/api/v1/ai/chat", response_model=StandardResponse)
 def chat_endpoint(req: ChatRequest):
     """
-    TODO: Apeksha KT - Validate input message, route to reasoning, and return ChatResponseData.
+    TODO: Implement chat integration with the reasoning module.
     """
-    raise HTTPException(status_code=501, detail="TODO: Apeksha KT to implement chat_endpoint")
+    raise HTTPException(
+        status_code=501,
+        detail="Chat endpoint implementation pending",
+    )
 
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    from backend.launcher import run_server
+
+    run_server()

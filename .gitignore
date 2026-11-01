@@ -27,4 +27,6 @@ Thumbs.db
 
 # Logs
 *.log
+
 .coverage
+.coverage.*
