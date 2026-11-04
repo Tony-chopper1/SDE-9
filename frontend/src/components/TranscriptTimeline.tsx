@@ -88,6 +88,7 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
       ref={containerRef}
       className="transcript-timeline"
       aria-label="Speech Transcript Timeline"
+      aria-live="polite"
       tabIndex={0}
       onScroll={handleScroll}
       style={{
@@ -136,6 +137,17 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
             const endSec = Math.ceil(seg.end_time);
             const confidencePercent = Math.round(seg.confidence * 100);
 
+            // Determine visual confidence badge level
+            let confClass = 'badge-conf-high';
+            let confLabel = 'High confidence';
+            if (seg.confidence < 0.65) {
+              confClass = 'badge-conf-low';
+              confLabel = 'Low confidence';
+            } else if (seg.confidence < 0.85) {
+              confClass = 'badge-conf-med';
+              confLabel = 'Medium confidence';
+            }
+
             return (
               <li
                 key={seg.id || `seg-${actualIndex}`}
@@ -158,12 +170,24 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
                   >
                     {startSec}s - {endSec}s
                   </span>
+
                   {seg.confidence > 0 && (
                     <span
-                      className="confidence-badge"
-                      title={`${confidencePercent}% recognition confidence`}
+                      className={`confidence-badge ${confClass}`}
+                      title={`${confidencePercent}% recognition confidence (${confLabel})`}
+                      aria-label={`${confidencePercent}% confidence (${confLabel})`}
                     >
                       {confidencePercent}%
+                    </span>
+                  )}
+
+                  {seg.revision !== undefined && seg.revision > 0 && (
+                    <span
+                      className="revision-badge"
+                      title={`Utterance revision ${seg.revision}`}
+                      aria-label={`Revision ${seg.revision}`}
+                    >
+                      Rev {seg.revision}
                     </span>
                   )}
                 </div>

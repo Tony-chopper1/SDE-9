@@ -51,3 +51,16 @@ export interface RecordingSession {
   transcript: string;
   durationSeconds?: number;
 }
+
+export type RecordingState = 'idle' | 'recording' | 'paused';
+
+export interface LiveTranscriptSegment {
+  id: string;
+  text: string;
+  confidence: number;
+  start_time: number;
+  end_time: number;
+  is_final: boolean;
+  revision: number;
+  speaker_id?: string;
+}

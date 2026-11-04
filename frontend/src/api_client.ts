@@ -38,6 +38,30 @@ export interface TranscriptSegment {
   start_time: number;
   end_time: number;
   is_final: boolean;
+  revision?: number;
+  speaker_id?: string;
+}
+
+export interface WindowContextData {
+  app_name: string;
+  window_title: string;
+  app_type?: string;
+  visible_snippet?: string;
+}
+
+export interface ContextSubmissionRequest {
+  session_id: string;
+  application?: string;
+  window_title?: string;
+  user_query?: string;
+  screen_context?: string;
+  active_window?: WindowContextData;
+}
+
+export interface ContextSubmissionData {
+  context_id: string;
+  status: string;
+  relevant_context?: string;
 }
 
 /**
@@ -81,5 +105,35 @@ export class TypedVoicebotClient {
       throw new Error(`Send chat message failed with HTTP ${res.status}`);
     }
     return (await res.json()) as StandardResponse<ChatResponseData>;
+  }
+
+  public async submitContext(
+    payload: ContextSubmissionRequest
+  ): Promise<StandardResponse<ContextSubmissionData>> {
+    const res = await fetch(`${this.baseUrl}/context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      throw new Error(`Submit context failed with HTTP ${res.status}`);
+    }
+    return (await res.json()) as StandardResponse<ContextSubmissionData>;
+  }
+
+  public createMockContextResponse(
+    payload: ContextSubmissionRequest
+  ): StandardResponse<ContextSubmissionData> {
+    return {
+      success: true,
+      data: {
+        context_id: `ctx-mock-${Date.now()}`,
+        status: 'mock_demo_accepted',
+        relevant_context:
+          payload.active_window?.visible_snippet ||
+          `Mock context accepted for ${payload.application || 'application'}`,
+      },
+      timestamp: Date.now(),
+    };
   }
 }
