@@ -3,28 +3,32 @@ Finite state machine for the Agentic Workflow module.
 
 Manages the full lifecycle of an agent session: state transitions with
 validation, plan construction with safety classification, human-approval
-gating, and structured error handling with recovery metadata.
+gating, DAG topological execution, and structured error handling.
 """
 
 from __future__ import annotations
 
 import time
 import uuid
-from typing import Dict, List, Optional, Tuple
+from typing import Collection, Dict, List, Optional, Tuple, Union
 
 from packages.agentic_workflow.models import (
     ActionPlan,
     AgentState,
+    PermissionScope,
+    PlanStatus,
     SafetyLevel,
+    WorkflowPlan,
     WorkflowStep,
     highest_safety_level,
 )
+from packages.agentic_workflow.validator import PlanValidator
+
 
 # ---------------------------------------------------------------------------
 # Transition Table
 # ---------------------------------------------------------------------------
 
-# Maps each state to the set of states it is permitted to transition into.
 _VALID_TRANSITIONS: Dict[AgentState, List[AgentState]] = {
     AgentState.IDLE: [AgentState.LISTENING, AgentState.ERROR],
     AgentState.LISTENING: [AgentState.PLANNING, AgentState.IDLE, AgentState.ERROR],
@@ -93,31 +97,12 @@ class StateTransitionRecord:
 class AgentStateMachine:
     """Finite state machine governing multi-step agentic decision loops.
 
-    The FSM enforces valid state transitions, records full transition history
-    with timestamps, applies a safety gate when building plans, and provides
-    structured approval and error-recovery paths.
-
-    Attributes:
-        state: Current :class:`AgentState` of the machine.
-        current_plan: The active :class:`ActionPlan`, if one has been built.
-        error_context: Metadata captured on the most recent ERROR transition.
-        transition_history: Ordered list of :class:`StateTransitionRecord` objects.
-
-    Example::
-
-        sm = AgentStateMachine()
-        sm.transition_to(AgentState.LISTENING)
-        sm.transition_to(AgentState.PLANNING)
-        step = WorkflowStep(
-            step_number=1,
-            description="Search project files",
-            tool_name="file.search",
-            safety_level=SafetyLevel.A,
-            parameters={"pattern": "*.py"},
-        )
-        plan = sm.build_plan(session_id="sess-1", goal="List Python files", steps=[step])
-        # SafetyLevel A → auto-proceeds to EXECUTING
-        assert sm.state == AgentState.EXECUTING
+    Features:
+        * Enforces valid state transitions with comprehensive history tracking.
+        * Integrates :class:`PlanValidator` for DAG cycle and dependency validation.
+        * Enforces approval gate rules for sensitive / destructive plans.
+        * Executes plans in DAG topological order via :meth:`execute_plan`.
+        * Provides robust error recovery paths via :meth:`handle_error` and :meth:`reset`.
     """
 
     def __init__(self) -> None:
@@ -127,19 +112,14 @@ class AgentStateMachine:
         self.transition_history: List[StateTransitionRecord] = []
 
     # ------------------------------------------------------------------
-    # Core transition primitives
+    # Core Transition Primitives
     # ------------------------------------------------------------------
 
     def transition_to(self, new_state: AgentState, metadata: Optional[Dict] = None) -> None:
         """Attempt a validated transition to *new_state*.
 
-        Args:
-            new_state: The target :class:`AgentState`.
-            metadata: Optional context to attach to the transition record.
-
         Raises:
-            InvalidTransitionError: If the transition from the current state
-                to *new_state* is not defined in the FSM transition table.
+            InvalidTransitionError: If the transition is not allowed from the current state.
         """
         allowed = _VALID_TRANSITIONS.get(self.state, [])
         if new_state not in allowed:
@@ -157,48 +137,46 @@ class AgentStateMachine:
         self.state = new_state
 
     def can_transition_to(self, target: AgentState) -> bool:
-        """Return ``True`` if transitioning to *target* is currently valid.
-
-        Args:
-            target: The :class:`AgentState` to test.
-
-        Returns:
-            ``True`` if the transition is permitted, ``False`` otherwise.
-        """
+        """Return ``True`` if transitioning to *target* is currently valid."""
         return target in _VALID_TRANSITIONS.get(self.state, [])
 
     # ------------------------------------------------------------------
-    # Plan construction
+    # Plan Construction & Validation
     # ------------------------------------------------------------------
 
     def build_plan(
-        self, session_id: str, goal: str, steps: List[WorkflowStep]
+        self,
+        session_id: str,
+        goal: str,
+        steps: List[WorkflowStep],
+        validate: bool = True,
     ) -> ActionPlan:
         """Construct an :class:`ActionPlan` and apply the safety gate.
 
-        If any step carries :attr:`SafetyLevel.C` (Sensitive) or
-        :attr:`SafetyLevel.D` (Destructive), ``requires_approval`` is set to
-        ``True`` and the machine transitions to ``AWAITING_APPROVAL``.
-        Otherwise the machine transitions directly to ``EXECUTING``.
-
-        The machine must be in ``PLANNING`` state before calling this method.
+        If *validate* is True, runs :class:`PlanValidator` to check for
+        missing dependencies and circular dependency cycles.
 
         Args:
-            session_id: Identifier of the originating user session.
-            goal: Natural-language description of the overall objective.
-            steps: Ordered list of :class:`WorkflowStep` objects.
+            session_id: Session identifier.
+            goal: Natural-language objective.
+            steps: List of workflow steps.
+            validate: Whether to validate DAG dependencies (default: True).
 
         Returns:
-            The constructed :class:`ActionPlan`.
+            Constructed and validated :class:`ActionPlan`.
 
         Raises:
-            InvalidTransitionError: If the machine is not currently in the
-                ``PLANNING`` state when this method is called.
+            InvalidTransitionError: If not in PLANNING state.
+            MissingDependencyError: If a step depends on an unlisted step ID.
+            CircularDependencyError: If steps contain cyclic dependencies.
         """
         if self.state != AgentState.PLANNING:
             raise InvalidTransitionError(
                 f"build_plan() requires state PLANNING; current state is {self.state!r}."
             )
+
+        if validate and steps:
+            PlanValidator.validate(steps)
 
         safety_levels = [step.safety_level for step in steps] if steps else [SafetyLevel.A]
         overall = highest_safety_level(safety_levels)
@@ -211,6 +189,7 @@ class AgentStateMachine:
             steps=list(steps),
             overall_safety_level=overall,
             requires_approval=needs_approval,
+            status=PlanStatus.AWAITING_APPROVAL if needs_approval else PlanStatus.PLANNING,
         )
         self.current_plan = plan
 
@@ -228,19 +207,11 @@ class AgentStateMachine:
         return plan
 
     # ------------------------------------------------------------------
-    # Approval handling
+    # Approval Handling
     # ------------------------------------------------------------------
 
     def approve_plan(self) -> ActionPlan:
-        """Approve the current pending plan and transition to ``EXECUTING``.
-
-        Returns:
-            The approved :class:`ActionPlan` with ``approved_at`` timestamp set.
-
-        Raises:
-            InvalidTransitionError: If the machine is not in ``AWAITING_APPROVAL``.
-            RuntimeError: If there is no current plan to approve.
-        """
+        """Approve the pending plan and transition to ``EXECUTING``."""
         if self.state != AgentState.AWAITING_APPROVAL:
             raise InvalidTransitionError(
                 f"approve_plan() requires state AWAITING_APPROVAL; current state is {self.state!r}."
@@ -248,9 +219,11 @@ class AgentStateMachine:
         if self.current_plan is None:
             raise RuntimeError("No current plan exists to approve.")
 
-        self.current_plan.approved_at = time.time()
+        now = time.time()
+        self.current_plan.approved_at = now
+        self.current_plan.status = PlanStatus.APPROVED
         self.current_plan.execution_logs.append(
-            f"[{time.time()}] Plan approved; transitioning to EXECUTING."
+            f"[{now}] Plan approved; transitioning to EXECUTING."
         )
         self.transition_to(
             AgentState.EXECUTING,
@@ -259,19 +232,7 @@ class AgentStateMachine:
         return self.current_plan
 
     def reject_plan(self, reason: str) -> ActionPlan:
-        """Reject the current pending plan and return to ``IDLE``.
-
-        Args:
-            reason: Human-readable explanation for the rejection.
-
-        Returns:
-            The rejected :class:`ActionPlan` with ``rejected_at`` and
-            ``rejection_reason`` populated.
-
-        Raises:
-            InvalidTransitionError: If the machine is not in ``AWAITING_APPROVAL``.
-            RuntimeError: If there is no current plan to reject.
-        """
+        """Reject the pending plan, mark steps as rejected, and return to ``IDLE``."""
         if self.state != AgentState.AWAITING_APPROVAL:
             raise InvalidTransitionError(
                 f"reject_plan() requires state AWAITING_APPROVAL; current state is {self.state!r}."
@@ -282,10 +243,9 @@ class AgentStateMachine:
         now = time.time()
         self.current_plan.rejected_at = now
         self.current_plan.rejection_reason = reason
-        self.current_plan.execution_logs.append(
-            f"[{now}] Plan rejected: {reason}"
-        )
-        # Mark all pending steps as rejected
+        self.current_plan.status = PlanStatus.REJECTED
+        self.current_plan.execution_logs.append(f"[{now}] Plan rejected: {reason}")
+
         for step in self.current_plan.steps:
             if step.status == "pending":
                 step.status = "rejected"
@@ -303,22 +263,104 @@ class AgentStateMachine:
         return rejected_plan
 
     # ------------------------------------------------------------------
-    # Error handling and recovery
+    # Plan Execution in Topological DAG Order
+    # ------------------------------------------------------------------
+
+    def execute_plan(
+        self,
+        executor: Optional[Any] = None,
+        granted_scopes: Optional[Collection[PermissionScope]] = None,
+        approval_manager: Optional[Any] = None,
+    ) -> ActionPlan:
+        """Execute the active plan's steps in prerequisite DAG topological order.
+
+        Transitions:
+            EXECUTING → VERIFYING → RESPONDING → IDLE (on success)
+            EXECUTING → ERROR (on step failure, cancellation, or approval block)
+
+        Args:
+            executor: Instance of :class:`MockToolExecutor`. Created if None.
+            granted_scopes: Scopes granted to caller for tool permission checking.
+            approval_manager: Optional :class:`ApprovalManager` to verify approval gate.
+
+        Returns:
+            The executed :class:`ActionPlan`.
+
+        Raises:
+            RuntimeError: If there is no current plan.
+            PermissionError: If execution is blocked by the approval gate.
+        """
+        if self.current_plan is None:
+            raise RuntimeError("No active plan to execute.")
+
+        if self.state != AgentState.EXECUTING:
+            raise InvalidTransitionError(
+                f"execute_plan() requires state EXECUTING; current state is {self.state!r}."
+            )
+
+        # Non-negotiable Approval Safety Check
+        if approval_manager is not None:
+            if not approval_manager.is_execution_permitted(self.current_plan):
+                self.handle_error("Execution blocked: Plan approval is missing, rejected, or expired.")
+                raise PermissionError("Plan execution is not permitted by approval gate.")
+        else:
+            if self.current_plan.requires_approval and self.current_plan.approved_at is None:
+                self.handle_error("Execution blocked: Plan requires approval.")
+                raise PermissionError("Plan requires approval before execution.")
+            if self.current_plan.rejected_at is not None:
+                self.handle_error("Execution blocked: Plan has been rejected.")
+                raise PermissionError("Plan was rejected.")
+
+        from packages.agentic_workflow.mock_executor import MockToolExecutor
+
+        exec_instance = executor or MockToolExecutor()
+
+        if exec_instance.is_cancelled:
+            self.current_plan.status = PlanStatus.CANCELLED
+            self.handle_error("Execution cancelled before starting.")
+            return self.current_plan
+
+        # Compute DAG topological order
+        ordered_ids = PlanValidator.get_topological_order(self.current_plan)
+        step_map = {s.id: s for s in self.current_plan.steps}
+
+        self.current_plan.status = PlanStatus.EXECUTING
+
+        for idx, step_id in enumerate(ordered_ids):
+            if exec_instance.is_cancelled:
+                self.current_plan.status = PlanStatus.CANCELLED
+                self.handle_error("Execution cancelled during plan steps.")
+                return self.current_plan
+
+            step = step_map[step_id]
+            self.current_plan.current_step_index = idx
+
+            res = exec_instance.execute_step(
+                step=step,
+                granted_scopes=granted_scopes,
+            )
+
+            if not res.success:
+                self.current_plan.status = PlanStatus.FAILED
+                self.handle_error(
+                    f"Execution failed at step '{step.id}' ({step.tool_name}): {res.error}"
+                )
+                return self.current_plan
+
+        # All steps succeeded: advance through verification and response to IDLE
+        self.transition_to(AgentState.VERIFYING)
+        self.transition_to(AgentState.RESPONDING)
+        self.transition_to(AgentState.IDLE)
+
+        self.current_plan.status = PlanStatus.COMPLETED
+        return self.current_plan
+
+    # ------------------------------------------------------------------
+    # Error Handling & Recovery
     # ------------------------------------------------------------------
 
     def handle_error(self, error_message: str) -> Dict:
-        """Transition to ``ERROR`` and capture recovery metadata.
-
-        Can be called from any state except ``ERROR`` itself (which requires
-        a reset first).
-
-        Args:
-            error_message: Human-readable description of the failure.
-
-        Returns:
-            A dict containing ``error_message``, ``previous_state``,
-            ``timestamp``, and ``plan_id`` (if a plan was active).
-        """
+        """Transition to ``ERROR`` and capture recovery metadata."""
         previous_state = self.state
         recovery_metadata: Dict = {
             "error_message": error_message,
@@ -331,13 +373,7 @@ class AgentStateMachine:
         return recovery_metadata
 
     def reset(self) -> None:
-        """Recover from ``ERROR`` state and return the machine to ``IDLE``.
-
-        Also clears :attr:`current_plan` and :attr:`error_context`.
-
-        Raises:
-            InvalidTransitionError: If the machine is not in the ``ERROR`` state.
-        """
+        """Recover from ``ERROR`` state and return the machine to ``IDLE``."""
         if self.state != AgentState.ERROR:
             raise InvalidTransitionError(
                 f"reset() can only be called from ERROR state; current state is {self.state!r}."
@@ -347,16 +383,11 @@ class AgentStateMachine:
         self.error_context = None
 
     # ------------------------------------------------------------------
-    # Inspection helpers
+    # Inspection Helpers
     # ------------------------------------------------------------------
 
     def get_transition_history(self) -> List[Tuple[str, str, float]]:
-        """Return the transition history as a list of ``(from, to, timestamp)`` tuples.
-
-        Returns:
-            A list of ``(from_state, to_state, timestamp)`` 3-tuples in
-            chronological order.
-        """
+        """Return the transition history as a list of ``(from, to, timestamp)`` tuples."""
         return [
             (r.from_state.value, r.to_state.value, r.timestamp)
             for r in self.transition_history

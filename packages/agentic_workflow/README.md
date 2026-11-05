@@ -1,13 +1,18 @@
 # Agentic Workflow Module (`packages/agentic_workflow/`)
 
-> **Owner**: Chirantan R Kuppelur · Branch: `feature/agentic-workflow`  
-> **Task**: W4 – Agentic Workflow: Workflow Schemas, State Machine & Mock Tool Executor
+> **Owner**: Chirantan R Kuppelur · Branch: `feature/chirantan-week2`  
+> **Task**: W4 – Agentic Workflow: Validation, Tool Registry, Approvals & Safe Executor (Weeks 1 & 2)
 
 ---
 
 ## Overview
 
-The `agentic_workflow` package provides the core orchestration layer for the SDK-9 AI Voice Co-Pilot. It implements a finite-state machine that governs multi-step agentic decisions, a safety-classification gate that enforces human approval for high-risk actions, and a mock tool executor for integration testing and local development.
+The `agentic_workflow` package provides the core orchestration layer for the SDK-9 AI Voice Co-Pilot. It implements:
+- A finite-state machine governing the multi-step agent lifecycle.
+- DAG dependency analysis with 3-color DFS cycle detection and topological sorting.
+- An allow-listed tool registry with parameter schema validation and permission scope enforcement.
+- Human-in-the-loop approval management with configurable TTL expiration.
+- A resilient mock tool executor with per-step timeouts, bounded retries for idempotent actions, and safe cancellation.
 
 ---
 
@@ -16,51 +21,68 @@ The `agentic_workflow` package provides the core orchestration layer for the SDK
 ```
 packages/agentic_workflow/
 ├── __init__.py          # Public API re-exports
-├── models.py            # Pydantic data models & enums
-├── state_machine.py     # AgentStateMachine FSM
-├── mock_executor.py     # MockToolExecutor (simulated tools)
-├── types.ts             # TypeScript interfaces (frontend contract)
+├── models.py            # Pydantic data models, enums & schemas
+├── validator.py         # DAG cycle detection & topological ordering
+├── registry.py          # Allow-listed tool registry & permission scopes
+├── approval.py          # Approval request lifecycle & TTL expiry
+├── state_machine.py     # AgentStateMachine FSM & execute_plan DAG runner
+├── mock_executor.py     # Resilient tool executor (timeouts, retries, cancel)
+├── types.ts             # TypeScript interfaces mirroring all contracts
 └── tests/
-    └── test_agentic_workflow.py  # Full unit + integration suite (126 tests, 99% coverage)
+    ├── test_agentic_workflow.py        # Week 1 tests (126 tests)
+    └── test_validation_and_safety.py   # Week 2 tests (33 tests)
 ```
+
+---
+
+## Week 2 Core Architecture
+
+### 1. Plan Validation & DAG Dependency Analysis (`validator.py`)
+- **Cycle Detection**: Validates prerequisites via 3-color (White, Gray, Black) DFS traversal. Detects self-dependencies ($A \rightarrow A$), two-node cycles ($A \rightarrow B \rightarrow A$), and multi-node cycles ($A \rightarrow B \rightarrow C \rightarrow A$), raising `CircularDependencyError` with the exact cycle path.
+- **Missing Prerequisites**: Identifies unknown step IDs referenced in `depends_on`, raising `MissingDependencyError`.
+- **Topological Ordering**: `PlanValidator.get_topological_order(plan)` returns step IDs sorted so all prerequisite actions complete before their dependents.
+
+### 2. Allow-Listed Tool Registry & Permission Scopes (`registry.py`)
+Only registered tools may be invoked. Each tool declares permission boundaries, parameter types, and idempotency:
+
+| Tool Name       | Permission Scope  | Idempotent | Safety Level | Required Parameters   |
+|-----------------|-------------------|------------|--------------|-----------------------|
+| `file.search`   | `READ_ONLY`       | ✅ Yes     | Level A      | None (all optional)   |
+| `file.move`     | `WORKSPACE_WRITE` | ❌ No      | Level C      | `source`, `destination` |
+| `calc.evaluate` | `READ_ONLY`       | ✅ Yes     | Level A      | `expression`          |
+
+- **Schema Validation**: Missing required parameters or type mismatches raise `ToolParameterError`.
+- **Permission Scopes**: Calling without the required scope raises `PermissionDeniedError`. `SYSTEM_EXEC` and `WORKSPACE_WRITE` satisfy read requirements.
+
+### 3. Approval Gate & TTL Expiration (`approval.py`)
+- Gated by `ApprovalManager` for any plan with `requires_approval=True` (Safety Level C or D).
+- Supports configurable TTL (e.g. 300s). Once `time.time() > expires_at`, the request transitions to `EXPIRED`.
+- **Non-negotiable Rule**: `is_execution_permitted(plan)` returns `True` **strictly only if** the plan has been explicitly approved and has not expired. Rejected or expired plans will **never** execute tools.
+
+### 4. Resilient Tool Executor (`mock_executor.py`)
+- **Timeouts**: Per-step `timeout_seconds` limits execution duration.
+- **Bounded Retries**: Idempotent tools (`file.search`, `calc.evaluate`) are retried up to 3 times with exponential backoff on transient errors.
+- **Retry Suppression**: Non-idempotent tools (`file.move`) fail fast on the first failure to prevent duplicate side-effects.
+- **Cancellation**: `cancel()` cooperatively halts pending and in-flight executions.
+
+### 5. State Machine Integration (`state_machine.py`)
+- `build_plan(..., validate=True)` automatically runs `PlanValidator`.
+- `execute_plan()` verifies approvals, computes the DAG topological order, invokes tools via `MockToolExecutor`, and advances state transitions through `VERIFYING` $\rightarrow$ `RESPONDING` $\rightarrow$ `IDLE`.
 
 ---
 
 ## Safety Levels
 
-Every `WorkflowStep` is tagged with a `SafetyLevel` that determines whether human approval is required before the plan executes.
-
 | Level | Label         | Approval Required | Typical Actions                         |
 |-------|---------------|-------------------|-----------------------------------------|
 | **A** | Informational | ❌ Auto-approved  | Read files, search, query               |
 | **B** | Low Risk      | ❌ Auto-approved  | Write logs, send notifications          |
-| **C** | Sensitive     | ✅ Required       | Edit configuration, send emails         |
+| **C** | Sensitive     | ✅ Required       | Edit configuration, move/rename files   |
 | **D** | Destructive   | ✅ Required       | Delete files, drop databases, overwrite |
-
-### Safety Gate Rule
-
-When `build_plan()` is called:
-- If **all** steps are level **A** or **B** → `requires_approval=False`, machine transitions to **EXECUTING**.
-- If **any** step is level **C** or **D** → `requires_approval=True`, `overall_safety_level` is set to the **most severe level present**, and the machine transitions to **AWAITING_APPROVAL**.
 
 ---
 
-## State Machine
-
-### States
-
-| State               | Description                                          |
-|---------------------|------------------------------------------------------|
-| `IDLE`              | Default resting state, awaiting input                |
-| `LISTENING`         | Actively receiving voice/text input                  |
-| `PLANNING`          | Building an `ActionPlan` from a goal + steps         |
-| `AWAITING_APPROVAL` | Blocked on human approval (C/D safety levels present)|
-| `EXECUTING`         | Running workflow steps via tool executor             |
-| `VERIFYING`         | Checking execution results                           |
-| `RESPONDING`        | Formulating and delivering the final response        |
-| `ERROR`             | Unrecoverable failure captured; awaiting reset       |
-
-### Transition Diagram
+## State Machine Transition Diagram
 
 ```mermaid
 flowchart LR
@@ -86,231 +108,118 @@ flowchart LR
 
 ---
 
-## API Reference
-
-### `AgentStateMachine`
-
-```python
-from packages.agentic_workflow import AgentStateMachine, AgentState, WorkflowStep, SafetyLevel
-
-sm = AgentStateMachine()
-print(sm.state)  # AgentState.IDLE
-```
-
-#### `transition_to(new_state, metadata=None)`
-Validate and perform a state transition. Raises `InvalidTransitionError` for illegal transitions.
-
-#### `can_transition_to(target) -> bool`
-Return `True` if the target state is reachable from the current state.
-
-#### `build_plan(session_id, goal, steps) -> ActionPlan`
-Build an `ActionPlan` from a list of `WorkflowStep` objects and apply the safety gate. **Must be called in `PLANNING` state.**
-
-#### `approve_plan() -> ActionPlan`
-Approve the pending plan and transition to `EXECUTING`. **Must be in `AWAITING_APPROVAL`.**
-
-#### `reject_plan(reason) -> ActionPlan`
-Reject the pending plan, mark all pending steps as `"rejected"`, and return to `IDLE`. **Must be in `AWAITING_APPROVAL`.**
-
-#### `handle_error(error_message) -> dict`
-Transition to `ERROR` state and return recovery metadata dict with `error_message`, `previous_state`, `timestamp`, and `plan_id`.
-
-#### `reset()`
-Recover from `ERROR` → `IDLE`. Clears `current_plan` and `error_context`. **Must be in `ERROR`.**
-
-#### `get_transition_history() -> list[tuple[str, str, float]]`
-Return chronological list of `(from_state, to_state, timestamp)` tuples.
-
----
-
-## Mock Tool Executor
-
-### Registered Tools
-
-| Tool Name       | Description                                   |
-|-----------------|-----------------------------------------------|
-| `file.search`   | Simulated directory scan; returns mock paths  |
-| `file.move`     | Simulated file move with source/destination validation |
-| `calc.evaluate` | Safe arithmetic expression evaluator          |
-
-All tools return a `ToolResult` with `success`, `output`, `duration_ms`, `error`, and `timestamp`.
-
-### `file.search` Parameters
-
-| Parameter     | Type  | Default | Description                            |
-|---------------|-------|---------|----------------------------------------|
-| `pattern`     | `str` | `"*"`   | Glob pattern (e.g. `"*.py"`)           |
-| `directory`   | `str` | `"/"`   | Root directory to scan                 |
-| `max_results` | `int` | `10`    | Maximum number of results to return    |
-
-### `file.move` Parameters
-
-| Parameter     | Type   | Required | Description                          |
-|---------------|--------|----------|--------------------------------------|
-| `source`      | `str`  | ✅       | Absolute source path                 |
-| `destination` | `str`  | ✅       | Absolute destination path            |
-| `overwrite`   | `bool` | ❌       | Whether to overwrite destination     |
-
-### `calc.evaluate` Parameters
-
-| Parameter    | Type  | Required | Description                          |
-|--------------|-------|----------|--------------------------------------|
-| `expression` | `str` | ✅       | Arithmetic expression (e.g. `"2+3*4"`) |
-
-Supported operators: `+`, `-`, `*`, `/`, `//`, `%`, `**`, unary `-`/`+`, integer/float literals.
-
-### Error Simulation Mode
-
-```python
-executor = MockToolExecutor(simulate_failure=True)
-result = executor.execute("file.search", {"pattern": "*.py"})
-assert result.success is False
-assert "simulated" in result.error.lower()
-```
-
----
-
 ## Code Examples
 
-### 1. Safe Plan (Level A/B → auto-executes)
+### 1. Build & Execute a DAG Action Plan
 
 ```python
 from packages.agentic_workflow import (
-    AgentStateMachine, AgentState, WorkflowStep, SafetyLevel
+    AgentStateMachine,
+    AgentState,
+    WorkflowStep,
+    SafetyLevel,
+    PermissionScope,
 )
-from packages.agentic_workflow.mock_executor import MockToolExecutor
 
 sm = AgentStateMachine()
 sm.transition_to(AgentState.LISTENING)
 sm.transition_to(AgentState.PLANNING)
 
-step = WorkflowStep(
+# Step 1: Search files
+s1 = WorkflowStep(
+    id="step-search",
     step_number=1,
-    description="Find Python files",
+    description="Search python files",
     tool_name="file.search",
     safety_level=SafetyLevel.A,
     parameters={"pattern": "*.py", "directory": "/src"},
 )
 
-plan = sm.build_plan(session_id="sess-1", goal="List all Python files", steps=[step])
-assert sm.state == AgentState.EXECUTING  # Auto-proceeded
+# Step 2: Depends on step-search
+s2 = WorkflowStep(
+    id="step-calc",
+    step_number=2,
+    description="Calculate stats",
+    tool_name="calc.evaluate",
+    safety_level=SafetyLevel.A,
+    depends_on=["step-search"],
+    parameters={"expression": "10 * 5"},
+)
 
-executor = MockToolExecutor()
-for s in plan.steps:
-    result = executor.execute(s.tool_name, s.parameters)
-    s.status = "completed" if result.success else "failed"
-    s.result = result.output
+# Validates DAG and transitions to EXECUTING
+plan = sm.build_plan(session_id="sess-01", goal="Search & calculate", steps=[s2, s1])
+assert sm.state == AgentState.EXECUTING
 
-sm.transition_to(AgentState.VERIFYING)
-sm.transition_to(AgentState.RESPONDING)
-sm.transition_to(AgentState.IDLE)
+# Executes in topological order (step-search then step-calc)
+sm.execute_plan(granted_scopes=[PermissionScope.READ_ONLY])
+assert sm.state == AgentState.IDLE
 ```
 
-### 2. Sensitive Plan (Level C/D → awaits approval)
+### 2. Approval Gate with TTL Expiry
 
 ```python
-from packages.agentic_workflow import AgentStateMachine, AgentState, WorkflowStep, SafetyLevel
+from packages.agentic_workflow import (
+    AgentStateMachine,
+    AgentState,
+    WorkflowStep,
+    SafetyLevel,
+    ApprovalManager,
+)
 
 sm = AgentStateMachine()
 sm.transition_to(AgentState.LISTENING)
 sm.transition_to(AgentState.PLANNING)
 
-step = WorkflowStep(
+s_move = WorkflowStep(
+    id="step-move",
     step_number=1,
-    description="Delete old log files",
+    description="Move sensitive logs",
     tool_name="file.move",
-    safety_level=SafetyLevel.D,
-    parameters={"source": "/logs/old.log", "destination": "/archive/old.log"},
+    safety_level=SafetyLevel.C,
+    parameters={"source": "/logs/app.log", "destination": "/archive/app.log"},
 )
 
-plan = sm.build_plan(session_id="sess-2", goal="Archive old logs", steps=[step])
-assert sm.state == AgentState.AWAITING_APPROVAL  # Needs human OK
+plan = sm.build_plan(session_id="sess-02", goal="Archive log file", steps=[s_move])
+assert sm.state == AgentState.AWAITING_APPROVAL
 
-# Human approves:
+# Managed approval gate
+mgr = ApprovalManager(default_ttl_seconds=300.0)
+req = mgr.create_request(plan.plan_id, "sess-02", SafetyLevel.C)
+mgr.approve(req.request_id, decided_by="sec-admin", reason="Authorized maintenance")
+
 sm.approve_plan()
-assert sm.state == AgentState.EXECUTING
-
-# Or human rejects:
-# sm.reject_plan("Security policy violation")
-```
-
-### 3. Error Recovery
-
-```python
-sm = AgentStateMachine()
-sm.transition_to(AgentState.LISTENING)
-
-meta = sm.handle_error("Unexpected NullPointerException in tool router")
-print(meta["previous_state"])  # "LISTENING"
-print(sm.state)                # AgentState.ERROR
-
-sm.reset()
-print(sm.state)                # AgentState.IDLE — ready to retry
-```
-
-### 4. Calculator Tool
-
-```python
-from packages.agentic_workflow.mock_executor import MockToolExecutor
-
-executor = MockToolExecutor()
-result = executor.execute("calc.evaluate", {"expression": "100 * 0.85 + 5"})
-print(result.output["result"])   # 90.0
-print(result.duration_ms)        # e.g. 0.12
+sm.execute_plan(approval_manager=mgr)
 ```
 
 ---
 
 ## Testing & Coverage
 
+Run the comprehensive test suite:
+
 ```bash
-# Run only agentic_workflow tests with coverage report
+# Agentic workflow suite with coverage
 .venv/bin/pytest --cov=packages/agentic_workflow packages/agentic_workflow/tests/ -v
 
-# Run full project test suite
+# Full monorepo suite
 .venv/bin/pytest
 ```
 
-Current results:
-
-| Module              | Statements | Covered | Coverage |
-|---------------------|-----------|---------|----------|
-| `models.py`         | 59        | 59      | **100%** |
-| `state_machine.py`  | 80        | 80      | **100%** |
-| `mock_executor.py`  | 73        | 71      | **97%**  |
-| `__init__.py`       | 4         | 4       | **100%** |
-| **Total**           | **798**   | **796** | **99%**  |
-
----
-
-## TypeScript Interface Contract
-
-The file [`types.ts`](./types.ts) defines matching TypeScript interfaces for all Python models, enabling type-safe API response handling in the React frontend:
-
-```typescript
-import type { ActionPlan, WorkflowStep, SafetyLevel, AgentState, ToolResult } from './types';
-
-// Example: render plan approval UI
-function renderApprovalBanner(plan: ActionPlan) {
-  if (plan.requires_approval) {
-    return `⚠️ Plan requires approval (Safety Level ${plan.overall_safety_level})`;
-  }
-  return "✅ Plan auto-approved and executing";
-}
-```
-
----
-
-## Git Workflow
+### Test Results
 
 ```
-Repository: https://github.com/Yashuudevang/acd_voicebot
-Branch: feature/agentic-workflow
-Base: develop
+============================= 159 passed in 2.05s =============================
+packages\agentic_workflow\__init__.py                     100%
+packages\agentic_workflow\approval.py                      93%
+packages\agentic_workflow\mock_executor.py                 85%
+packages\agentic_workflow\models.py                       100%
+packages\agentic_workflow\registry.py                      98%
+packages\agentic_workflow\state_machine.py                 93%
+packages\agentic_workflow\validator.py                     96%
+packages\agentic_workflow\tests\test_agentic_workflow.py  100%
+packages\agentic_workflow\tests\test_validation_and_safety.py 100%
+------------------------------------------------------------------
+TOTAL COVERAGE: 97%
 ```
 
-Commits follow [Conventional Commits](https://www.conventionalcommits.org/):
-- `feat(workflow):` for new features
-- `fix(workflow):` for bug fixes
-- `test(workflow):` for tests
-- `docs(workflow):` for documentation
+Monorepo full test suite: **266 passed, 0 failures**.
