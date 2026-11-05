@@ -184,6 +184,18 @@ class AudioFrame(BaseModel):
             data["data"] = bytes(raw_bytes)
             data["audio_data"] = bytes(raw_bytes)
 
+            # If a config object was supplied, inherit its parameters
+            cfg = data.get("config")
+            if cfg is not None:
+                if hasattr(cfg, "sample_rate") and "sample_rate" not in data:
+                    data["sample_rate"] = cfg.sample_rate
+                if hasattr(cfg, "channels") and "channels" not in data:
+                    data["channels"] = cfg.channels
+                if hasattr(cfg, "format") and "format" not in data:
+                    data["format"] = cfg.format
+                if hasattr(cfg, "frame_duration_ms") and "frame_duration_ms" not in data:
+                    data["frame_duration_ms"] = cfg.frame_duration_ms
+
             # Sync frame_index / sequence_number if one is provided
             if "sequence_number" in data and "frame_index" not in data:
                 data["frame_index"] = data["sequence_number"]
