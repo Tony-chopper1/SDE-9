@@ -96,14 +96,14 @@ SDK-9/
 │   │
 │   ├── context_reasoning/                 # Context & Reasoning (Praveen Kumar)
 │   │   ├── context_manager.py             # Active window, screen & turn history manager
-│   │   ├── prompt_manager.py              # Versioned prompt template registry
-│   │   ├── mock_reasoning.py              # LLM intent classification & tool decision service
-│   │   ├── models.py                      # ConversationContext & WindowContext schemas
-│   │   ├── types.ts                       # TypeScript context definitions
+│   │   ├── prompt_manager.py              # Versioned prompt templates with variable injection
+│   │   ├── mock_engine.py                 # Simulated reasoning & action-dispatch engine
+│   │   ├── models.py                      # ContextState, ReasoningOutput data models
+│   │   ├── types.ts                       # TypeScript context interfaces
 │   │   ├── README.md                      # Context engine documentation
-│   │   └── tests/                         # Isolated context reasoning tests
+│   │   └── tests/                         # Context reasoning test suite
 │   │
-│   └── agentic_workflow/                  # Workflow & Tool Execution (Chiranthan RK)
+│   └── agentic_workflow/                 # Agentic Workflow & Tool Execution (Chiranthan RK)
 │       ├── state_machine.py               # Multi-step decision FSM with safety gates (A–D)
 │       ├── mock_executor.py               # Safe tool executor (file.search, file.move, calc)
 │       ├── models.py                      # ActionPlan, WorkflowStep, ToolResult models
@@ -190,6 +190,16 @@ uvicorn backend.main:app --reload --port 8000
 - **API Health**: `http://localhost:8000/api/v1/health`
 - **Interactive Swagger Docs**: `http://localhost:8000/docs`
 
+#### Core Backend Endpoints:
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/health` | Health check endpoint |
+| POST | `/api/v1/sessions` | Create a new session |
+| GET | `/api/v1/sessions` | Retrieve all active sessions |
+| GET | `/api/v1/sessions/{session_id}` | Retrieve specific session details |
+| POST | `/api/v1/sessions/{session_id}/pause` | Pause active session |
+| POST | `/api/v1/sessions/{session_id}/stop` | Stop active session |
+
 ### B. Start the Frontend Studio
 ```bash
 cd frontend
@@ -236,7 +246,6 @@ cd frontend && npm test -- --run
 ```bash
 pytest
 ```
-*Currently passing **170+ tests** with comprehensive code coverage across all core modules.*
 
 ---
 
@@ -248,3 +257,21 @@ pytest
 
 > [!IMPORTANT]
 > Never push directly to `develop` or `main`. All contributions must be submitted via Pull Requests targeting `develop` after passing all local test suites.
+
+---
+
+## 📄 Shared Contracts & Documentation
+
+Review the foundational specifications before implementing or modifying interfaces:
+- `docs/architecture.md` - Core system architecture and data flows.
+- `docs/integration-contracts.md` - Interservice JSON schemas, models, and TypeScript types.
+- `docs/development-workflow.md` - Git branching policies, PR checklist, and code quality standards.
+
+---
+
+## 🔒 Security & Best Practices
+
+- Never commit API keys, secrets, or personal credentials.
+- Do not commit `.env` or temporary credential files (enforced by `.gitignore`).
+- Do not upload real private audio recordings or confidential screen data.
+- Utilize local mock providers and offline simulators during development.
