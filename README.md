@@ -1,139 +1,277 @@
-# SDE-9 — AcademiaAI AI Voicebot
+# SDK-9 — AcademiaAI Voicebot & Voice Co-Pilot
 
-## Project Overview
+> **Team SDE-9** · Final Delivery: `projects/sde-9-voicebot/` (Branch: `team/sde-9-voicebot`)  
+> Comprehensive voice-driven AI co-pilot designed for real-time speech interaction, contextual screen reasoning, multi-step agentic workflows, and safe action execution.
 
-SDK-9 is a six-member team project that develops an AI Voicebot using modular components. The application supports mock mode without requiring paid API credentials.
+---
 
-## Technology Stack
+## 🏛️ High-Level System Architecture
 
-- Backend: Python and FastAPI
-- Frontend: React and TypeScript
-- Version Control: Git and GitHub
-- Testing: Pytest and automated integration tests
+```mermaid
+flowchart TD
+    subgraph Client["Frontend Client (React 18 + TypeScript)"]
+        UI["Voice Studio UI\n(AppShell, Waveform, Virtualized Timeline)"]
+        ClientAPI["Typed API Client\n(Zero 'any' Types)"]
+        UI --> ClientAPI
+    end
 
-## Team Modules
+    subgraph Gateway["Backend Gateway (FastAPI)"]
+        Server["FastAPI REST & WebSocket Gateway\n(CORS, Latency Logging Middleware)"]
+        Sessions["Session Management Service\n(/api/v1/sessions CRUD)"]
+        Launcher["Service Launcher & Config Orchestrator\n(backend/launcher.py)"]
+        Server --> Sessions
+    end
 
-| Member | Responsibility | Feature Branch |
-|---|---|---|
-| Satwik A | Audio and VAD | `feature/audio-vad` |
-| Pavanchand RM | Speech-to-Text | `feature/speech-to-text` |
-| Praveen Kumar | Context and Reasoning | `feature/context-reasoning` |
-| Chiranthan Rk | Agentic Workflow | `feature/agentic-workflow` |
-| Apeksha KT | Backend | `feature/backend-fastapi` |
-| Spoorthi V | Frontend | `feature/frontend` |
+    subgraph AudioPipeline["Audio & Speech Pipeline"]
+        Mic["Mock Microphone Source\n(16kHz 16-bit Mono PCM)"] -->|"AudioFrame Stream"| VAD["Voice Activity Detection\n(Energy & Simple VAD)"]
+        VAD -->|"Speech Activity Events"| STT["Speech-to-Text Engine\n(FakeTranscriber & Confidence Scorer)"]
+        STT -->|"Partial & Final Segments"| Accumulator["Segment Accumulator State Machine\n(Out-of-Order Sorting, 0 Leaks)"]
+    end
 
-## Repository Structure
+    subgraph Intelligence["Cognitive & Agentic Workflow Engine"]
+        Context["Context Manager\n(Active Window, Snippets, Turn History)"]
+        Prompt["Versioned Prompt Manager\n(Template Registry & Substitution)"]
+        Reasoning["Mock Reasoning Engine\n(Intent Classification & Tool Triggering)"]
+        Workflow["Agentic Workflow State Machine\n(Safety Gates: Levels A, B, C, D)"]
+        Tools["Mock Tool Executor\n(file.search, file.move, calc.evaluate)"]
+        
+        Context --> Reasoning
+        Prompt --> Reasoning
+        Reasoning --> Workflow
+        Workflow -->|"Execute Action"| Tools
+    end
 
-- `docs/` - Architecture, integration contracts and development workflow
-- `packages/audio/` - Audio processing and VAD
-- `packages/speech-to-text/` - Speech transcription
-- `packages/context-reasoning/` - Context and reasoning
-- `packages/agentic-workflow/` - Workflow execution
-- `backend/` - FastAPI backend application
-  - `api/` - API route handlers
-  - `schemas/` - Request and response models
-  - `services/` - Business logic and session management
-  - `tests/` - Backend automated tests
-  - `main.py` - FastAPI application entry point
-  - `launcher.py` - Backend service launcher
-- `frontend/` - React and TypeScript application
+    ClientAPI <-->|"HTTP / REST"| Server
+    Accumulator -->|"Synthesized Utterance"| Context
+    Workflow -->|"Action Plan & Status"| Server
+```
 
-## Getting Started
+---
 
-### 1. Clone the Repository
+## 📁 Monorepo Directory Structure
 
+```
+SDK-9/
+├── backend/                               # FastAPI Backend Gateway (Apeksha KT)
+│   ├── api/                               # Session endpoints (/api/v1/sessions)
+│   ├── schemas/                           # Pydantic request & response schemas
+│   ├── services/                          # In-memory session management service
+│   ├── launcher.py                        # Service orchestrator (env & CLI flags)
+│   ├── main.py                            # ASGI entrypoint with request logging
+│   ├── README.md                          # Backend architecture & API documentation
+│   └── tests/                             # Backend unit and integration tests
+│
+├── frontend/                              # Accessible React 18 UI (Spoorthi V)
+│   ├── src/
+│   │   ├── components/                    # AppShell, VoiceControls, TranscriptTimeline
+│   │   ├── hooks/                         # useVoiceRecorder custom Web Speech hook
+│   │   ├── api_client.ts                  # Strictly-typed API client (zero 'any')
+│   │   ├── App.tsx                        # Enterprise Studio workspace
+│   │   └── styles.css                     # Responsive WCAG 2.1 AA styling
+│   ├── src/__tests__/                     # Vitest component & hook test suite
+│   ├── ACCESSIBILITY.md                   # Full WCAG 2.1 AA compliance audit report
+│   ├── package.json                       # Frontend scripts & dependencies
+│   ├── README.md                          # Frontend setup & architecture guide
+│   └── vite.config.ts                     # Vite build & bundler configuration
+│
+├── packages/                              # Core Python Micro-Packages
+│   │
+│   ├── audio/                             # Audio Capture & VAD (Satwik A - Team Lead)
+│   │   ├── mock_mic.py                    # 16-bit PCM streaming microphone simulator
+│   │   ├── vad.py                         # Energy-based & simple Voice Activity Detectors
+│   │   ├── cli.py                         # Real-time ASCII audio meter CLI demo
+│   │   ├── models.py / schemas.py         # AudioConfig, AudioFrame, VADResult schemas
+│   │   ├── types.ts                       # TypeScript audio definitions
+│   │   ├── README.md                      # Audio pipeline documentation
+│   │   └── tests/                         # Isolated audio unit & stress tests
+│   │
+│   ├── speech_to_text/                    # Speech-to-Text & Accumulator (Pavanchand RM)
+│   │   ├── fake_transcriber.py            # Simulated STT & dynamic confidence scoring
+│   │   ├── accumulator.py                 # Streaming chunk accumulator state machine
+│   │   ├── cli.py                         # Live streaming transcription CLI demo
+│   │   ├── models.py                      # TranscriptSegment & AccumulatedUtterance models
+│   │   ├── types.ts                       # TypeScript speech interfaces
+│   │   ├── README.md                      # STT architecture & pipeline documentation
+│   │   └── tests/                         # STT unit, integration & memory tests
+│   │
+│   ├── context_reasoning/                 # Context & Reasoning (Praveen Kumar)
+│   │   ├── context_manager.py             # Active window, screen & turn history manager
+│   │   ├── prompt_manager.py              # Versioned prompt templates with variable injection
+│   │   ├── mock_engine.py                 # Simulated reasoning & action-dispatch engine
+│   │   ├── models.py                      # ContextState, ReasoningOutput data models
+│   │   ├── types.ts                       # TypeScript context interfaces
+│   │   ├── README.md                      # Context engine documentation
+│   │   └── tests/                         # Context reasoning test suite
+│   │
+│   └── agentic_workflow/                 # Agentic Workflow & Tool Execution (Chiranthan RK)
+│       ├── state_machine.py               # Multi-step decision FSM with safety gates (A–D)
+│       ├── mock_executor.py               # Safe tool executor (file.search, file.move, calc)
+│       ├── models.py                      # ActionPlan, WorkflowStep, ToolResult models
+│       ├── types.ts                       # TypeScript workflow interfaces
+│       ├── README.md                      # State machine transition & safety docs
+│       └── tests/                         # Workflow unit & integration tests
+│
+├── docs/                                  # Team Specifications & Contracts
+│   ├── architecture.md                    # Core architectural standards
+│   ├── integration-contracts.md           # Inter-module data contract definitions
+│   └── development-workflow.md            # Git branching rules & PR checklist
+│
+├── tests/                                 # End-to-End Test Suite
+│   ├── integration/                       # Reserved for Week 4 cross-module pipelines
+│   └── README.md                          # Testing philosophy & isolation strategy
+│
+├── pyproject.toml                         # Monorepo build & package discovery configuration
+└── requirements.txt                       # Python dependencies (FastAPI, Pydantic, Pytest, Uvicorn)
+```
+
+---
+
+## 👥 Team Members & Module Ownership
+
+| Member | Responsibility | Package Path | Feature Branch |
+| :--- | :--- | :--- | :--- |
+| **Satwik A** *(Team Lead)* | Audio Capture & Voice Activity Detection | `packages/audio/` | `feature/audio-vad` |
+| **Pavanchand RM** | Speech-to-Text & Segment Accumulator | `packages/speech_to_text/` | `feature/speech-to-text` |
+| **Chiranthan RK** | Agentic Workflow & Mock Tool Execution | `packages/agentic_workflow/` | `feature/agentic-workflow` |
+| **Apeksha KT** | Backend Gateway, Sessions & Launcher | `backend/` | `feature/backend-fastapi` |
+| **Spoorthi V** | Frontend UI, AppShell & Virtualized Timeline | `frontend/` | `feature/frontend` |
+| **Praveen Kumar** | Context Tracking & Versioned Reasoning | `packages/context_reasoning/` | `feature/context-reasoning` |
+
+---
+
+## ⚡ Quickstart Guide
+
+### 1. Prerequisites
+- **Python**: Version 3.10+ (Recommended: Python 3.12)
+- **Node.js**: Version 18+ (Recommended: Node 20 LTS)
+
+### 2. Environment Setup
+
+#### Clone the Repository:
 ```bash
 git clone https://github.com/Tony-chopper1/SDK-9.git
 cd SDK-9
 ```
 
-### 2. Create and Activate Virtual Environment
+#### Python Virtual Environment Setup:
+```bash
+# Create virtual environment:
+python3 -m venv .venv
 
-Windows PowerShell:
+# Activate virtual environment:
+source .venv/bin/activate       # On Linux / macOS
+.venv\Scripts\activate          # On Windows (CMD)
+.venv\Scripts\Activate.ps1      # On Windows (PowerShell)
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+# Install dependencies in editable mode:
+pip install -r requirements.txt
+pip install -e .
 ```
 
-### 3. Install Dependencies
-
-```powershell
-python -m pip install -r requirements.txt
+#### Frontend Dependencies:
+```bash
+cd frontend
+npm ci
+cd ..
 ```
 
-### 4. Start the Backend Server
+---
 
-```powershell
-python -m backend.launcher
+## 🚀 Running the Services
+
+### A. Start the Backend Gateway
+```bash
+# Using the dedicated service launcher:
+python backend/launcher.py --port 8000 --reload
+
+# Or directly with Uvicorn:
+uvicorn backend.main:app --reload --port 8000
 ```
+- **API Health**: `http://localhost:8000/api/v1/health`
+- **Interactive Swagger Docs**: `http://localhost:8000/docs`
 
-The backend runs on port `8000` by default.
-
-### 5. Access API Documentation
-
-Open the following URL in your browser:
-
-http://127.0.0.1:8000/docs
-
-The Swagger UI allows you to explore and test the available API endpoints.
-
-## Backend API Endpoints
-
+#### Core Backend Endpoints:
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/health` | Check backend health |
-| POST | `/api/v1/sessions` | Create a session |
-| GET | `/api/v1/sessions` | Retrieve all sessions |
-| GET | `/api/v1/sessions/{session_id}` | Retrieve a session |
-| POST | `/api/v1/sessions/{session_id}/pause` | Pause a session |
-| POST | `/api/v1/sessions/{session_id}/stop` | Stop a session |
+| GET | `/api/v1/health` | Health check endpoint |
+| POST | `/api/v1/sessions` | Create a new session |
+| GET | `/api/v1/sessions` | Retrieve all active sessions |
+| GET | `/api/v1/sessions/{session_id}` | Retrieve specific session details |
+| POST | `/api/v1/sessions/{session_id}/pause` | Pause active session |
+| POST | `/api/v1/sessions/{session_id}/stop` | Stop active session |
 
-The AI chat endpoint is currently reserved for integration with the context and reasoning module.
+### B. Start the Frontend Studio
+```bash
+cd frontend
+npm run dev
+```
+Open your browser at **`http://localhost:5173`** to access the voice studio interface.
 
-## Testing
+### C. Run Standalone CLI Demos
+Each micro-package provides an interactive terminal demonstration:
 
-Run backend automated tests:
+```bash
+# Speech-to-Text & Streaming Accumulator Demo:
+python -m packages.speech_to_text.cli
 
-```powershell
-python -m pytest backend/tests/ -v
+# Audio Capture & VAD Meter Demo:
+python -m packages.audio.cli --iterations 10
 ```
 
-Run tests with code coverage:
+---
 
-```powershell
-python -m pytest backend/tests/ --cov=backend --cov-report=term-missing
+## 🧪 Automated Testing Strategy
+
+To ensure zero merge conflicts during parallel feature development, all unit tests are colocated within their respective module directories:
+
+### Run Isolated Package Tests:
+```bash
+# Speech-to-Text:
+pytest packages/speech_to_text/tests/ -v
+
+# Audio & VAD:
+pytest packages/audio/tests/ -v
+
+# Agentic Workflow:
+pytest packages/agentic_workflow/tests/ -v
+
+# Backend Gateway:
+pytest backend/tests/ -v
+
+# Frontend Vitest Suite:
+cd frontend && npm test -- --run
 ```
 
-### Backend Test Results
+### Run Full Repository Test Suite:
+```bash
+pytest
+```
 
-Latest verified test results:
+---
 
-- Total tests: 22
-- Passed: 22
-- Failed: 0
-- Overall code coverage: 98%
+## 🌿 Git & Branching Strategy
 
-## Branch Strategy
+- **`main`**: Production-ready, stable milestone releases.
+- **`develop`**: Central integration branch for all verified feature PRs.
+- **`feature/*`**: Individual developer branches created from `develop`.
 
-- `main` - Stable, tested releases
-- `develop` - Shared integration branch
-- `feature/*` - Individual development branches
+> [!IMPORTANT]
+> Never push directly to `develop` or `main`. All contributions must be submitted via Pull Requests targeting `develop` after passing all local test suites.
 
-Do not push feature work directly to `main` or `develop`. Submit pull requests targeting `develop` and follow the review process documented in `docs/development-workflow.md`.
+---
 
-## Shared Contracts
+## 📄 Shared Contracts & Documentation
 
-Read the following documents before implementing module interfaces:
+Review the foundational specifications before implementing or modifying interfaces:
+- `docs/architecture.md` - Core system architecture and data flows.
+- `docs/integration-contracts.md` - Interservice JSON schemas, models, and TypeScript types.
+- `docs/development-workflow.md` - Git branching policies, PR checklist, and code quality standards.
 
-- `docs/architecture.md`
-- `docs/integration-contracts.md`
-- `docs/development-workflow.md`
+---
 
-## Security
+## 🔒 Security & Best Practices
 
-- Never commit API keys or credentials.
-- Do not commit `.env` files.
-- Do not upload private recordings or personal data.
-- Use mock mode during development when real provider credentials are unavailable.
-
+- Never commit API keys, secrets, or personal credentials.
+- Do not commit `.env` or temporary credential files (enforced by `.gitignore`).
+- Do not upload real private audio recordings or confidential screen data.
+- Utilize local mock providers and offline simulators during development.
