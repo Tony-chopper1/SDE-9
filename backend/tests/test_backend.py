@@ -2,6 +2,8 @@
 Unit Tests for Backend API Gateway
 Assigned Member: Apeksha KT (feature/backend-fastapi - Task W5)
 """
+from urllib import response
+
 from fastapi.testclient import TestClient
 from backend.main import app
 
@@ -26,4 +28,7 @@ def test_chat_endpoint_pending():
         json={"session_id": "session-123", "message": "Hello AI voicebot"},
     )
     assert response.status_code == 501
-    assert "Chat endpoint implementation pending" in response.json()["detail"]
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "HTTP_501"
+    assert "Chat endpoint implementation pending" in response.json()["error"]["message"]
+    assert response.json()["error"]["request_id"]

@@ -41,7 +41,11 @@ def test_get_session_not_found():
     non_existent_id = uuid4()
     response = client.get(f"/api/v1/sessions/{non_existent_id}")
     assert response.status_code == 404
-    assert response.json()["detail"] == "Session not found"
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "HTTP_404"
+    assert response.json()["error"]["message"] == "Session not found"
+    assert response.json()["error"]["request_id"]
+
 
 
 def test_pause_session():
@@ -64,7 +68,12 @@ def test_pause_session_not_found():
     non_existent_id = uuid4()
     response = client.post(f"/api/v1/sessions/{non_existent_id}/pause")
     assert response.status_code == 404
-    assert response.json()["detail"] == "Session not found"
+    assert response.status_code == 404
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "HTTP_404"
+    assert response.json()["error"]["message"] == "Session not found"
+    assert response.json()["error"]["request_id"]
+
 
 
 def test_stop_session():
@@ -87,4 +96,8 @@ def test_stop_session_not_found():
     non_existent_id = uuid4()
     response = client.post(f"/api/v1/sessions/{non_existent_id}/stop")
     assert response.status_code == 404
-    assert response.json()["detail"] == "Session not found"
+
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "HTTP_404"
+    assert response.json()["error"]["message"] == "Session not found"
+    assert response.json()["error"]["request_id"]

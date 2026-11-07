@@ -1,7 +1,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Header, status
 
 from backend.schemas.session import (
     SessionCreate,
@@ -25,8 +25,7 @@ session_service = SessionService()
     status_code=status.HTTP_201_CREATED,
 )
 def create_session(data: SessionCreate):
-    session = session_service.create_session(data.user_id)
-    return session
+    return session_service.create_session(data.user_id)
 
 
 @router.get("", response_model=list[SessionResponse])
@@ -39,20 +38,24 @@ def get_session(session_id: UUID):
     session = session_service.get_session(session_id)
 
     if session is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Session not found",
-        )
+        raise HTTPException(status_code=404, detail="Session not found")
 
     return session
 
 
-@router.post("/{session_id}/pause", response_model=SessionResponse)
-def pause_session(session_id: UUID):
-    session = session_service.update_status(
-        session_id,
-        SessionStatus.PAUSED,
-    )
+def update_session(
+    session_id: UUID,
+    target_status: SessionStatus,
+    idempotency_key: str | None,
+):
+    try:
+        session = session_service.update_status(
+            session_id,
+            target_status,
+            idempotency_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -60,12 +63,45 @@ def pause_session(session_id: UUID):
     return session
 
 
+@router.post("/{session_id}/pause", response_model=SessionResponse)
+def pause_session(
+    session_id: UUID,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    return update_session(
+        session_id,
+        SessionStatus.PAUSED,
+        idempotency_key,
+    )
+
+
+@router.post("/{session_id}/resume", response_model=SessionResponse)
+def resume_session(
+    session_id: UUID,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    return update_session(
+        session_id,
+        SessionStatus.ACTIVE,
+        idempotency_key,
+    )
+
+
 @router.post("/{session_id}/stop", response_model=SessionResponse)
-def stop_session(session_id: UUID):
-    session = session_service.update_status(
+def stop_session(
+    session_id: UUID,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    return update_session(
         session_id,
         SessionStatus.COMPLETED,
+        idempotency_key,
     )
+
+
+@router.post("/{session_id}/expire", response_model=SessionResponse)
+def expire_session(session_id: UUID):
+    session = session_service.expire_session(session_id)
 
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
