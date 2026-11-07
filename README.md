@@ -1,4 +1,4 @@
-# SDK-9 - AcademiaAI AI Voicebot
+# SDE-9 — AcademiaAI AI Voicebot
 
 ## Project Overview
 
