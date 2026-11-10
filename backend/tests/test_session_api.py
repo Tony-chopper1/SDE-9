@@ -1,6 +1,4 @@
-
 from uuid import uuid4
-
 from fastapi.testclient import TestClient
 
 from backend.main import app
@@ -41,21 +39,13 @@ def test_get_session_by_id():
 
 def test_get_session_not_found():
     non_existent_id = uuid4()
-
-    response = client.get(
-        f"/api/v1/sessions/{non_existent_id}"
-    )
-
+    response = client.get(f"/api/v1/sessions/{non_existent_id}")
     assert response.status_code == 404
-
-    error = response.json()["error"]
-
     assert response.json()["success"] is False
-    assert error["code"] == "HTTP_404"
-    assert error["message_safe_for_user"] == "Resource not found"
-    assert error["retryable"] is False
-    assert error["correlation_id"]
-    assert "request_id" not in error
+    assert response.json()["error"]["code"] == "HTTP_404"
+    assert response.json()["error"]["message"] == "Session not found"
+    assert response.json()["error"]["request_id"]
+
 
 
 def test_pause_session():
@@ -76,19 +66,14 @@ def test_pause_session():
 
 def test_pause_session_not_found():
     non_existent_id = uuid4()
-
-    response = client.post(
-        f"/api/v1/sessions/{non_existent_id}/pause"
-    )
-
+    response = client.post(f"/api/v1/sessions/{non_existent_id}/pause")
     assert response.status_code == 404
-
-    error = response.json()["error"]
-
+    assert response.status_code == 404
     assert response.json()["success"] is False
-    assert error["code"] == "HTTP_404"
-    assert error["message_safe_for_user"] == "Resource not found"
-    assert error["correlation_id"]
+    assert response.json()["error"]["code"] == "HTTP_404"
+    assert response.json()["error"]["message"] == "Session not found"
+    assert response.json()["error"]["request_id"]
+
 
 
 def test_stop_session():
@@ -109,16 +94,10 @@ def test_stop_session():
 
 def test_stop_session_not_found():
     non_existent_id = uuid4()
-
-    response = client.post(
-        f"/api/v1/sessions/{non_existent_id}/stop"
-    )
-
+    response = client.post(f"/api/v1/sessions/{non_existent_id}/stop")
     assert response.status_code == 404
 
-    error = response.json()["error"]
-
     assert response.json()["success"] is False
-    assert error["code"] == "HTTP_404"
-    assert error["message_safe_for_user"] == "Resource not found"
-    assert error["correlation_id"]
+    assert response.json()["error"]["code"] == "HTTP_404"
+    assert response.json()["error"]["message"] == "Session not found"
+    assert response.json()["error"]["request_id"]

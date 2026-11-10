@@ -5,10 +5,9 @@ import time
 
 class APIError(BaseModel):
     code: str
-    message_safe_for_user: str
-    retryable: bool = False
-    correlation_id: str
-    details_redacted: Optional[Dict[str, Any]] = None
+    message: str
+    request_id: str
+    details: Optional[Dict[str, Any]] = None
 
 
 class StandardResponse(BaseModel):
