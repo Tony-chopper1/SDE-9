@@ -26,7 +26,10 @@ export const AppContent: React.FC = () => {
     backendStatus: 'unknown',
   });
 
-  // Query backend health to retrieve actual engine name and measured round-trip latency
+  // State for backend-reported mock mode (from health check only)
+  const [isMockMode, setIsMockMode] = useState<boolean>(false);
+
+  // Query backend health to retrieve actual engine name, measured round-trip latency, and mock mode
   useEffect(() => {
     let isMounted = true;
     const client = new TypedVoicebotClient();
@@ -39,6 +42,7 @@ export const AppContent: React.FC = () => {
 
         if (isMounted) {
           const isHealthy = res.data?.status === 'healthy';
+          setIsMockMode(res.data?.mock_mode === true);
           setEngineStatus((prev) => ({
             ...prev,
             engineName: res.data?.service || null,
@@ -48,6 +52,7 @@ export const AppContent: React.FC = () => {
         }
       } catch {
         if (isMounted) {
+          setIsMockMode(false);
           setEngineStatus((prev) => ({
             ...prev,
             engineName: null,
@@ -140,6 +145,7 @@ export const AppContent: React.FC = () => {
     liveTranscript,
     errorMessage,
     setErrorMessage,
+    micPermission,
     startRecording,
     stopRecording,
   } = useVoiceRecorder({
@@ -266,6 +272,20 @@ export const AppContent: React.FC = () => {
       serviceOnline={isServiceOnline}
       engineStatus={computedEngineStatus}
     >
+      {/* Visible Mock Mode Banner */}
+      {isMockMode && (
+        <div
+          className="mock-mode-banner"
+          role="status"
+          aria-label="Mock Mode Active"
+        >
+          <span className="mock-badge" aria-hidden="true">MOCK MODE</span>
+          <span className="mock-text">
+            <strong>Running in Mock Mode:</strong> Backend services are operating in simulated test mode.
+          </span>
+        </div>
+      )}
+
       {/* Enterprise Hero Banner */}
       <section className="hero-banner" aria-label="Overview Banner">
         <div className="hero-content">
@@ -289,6 +309,7 @@ export const AppContent: React.FC = () => {
             onToggleRecording={handleToggleRecording}
             errorMessage={errorMessage}
             onDismissError={() => setErrorMessage('')}
+            micPermission={micPermission}
           />
         </div>
 

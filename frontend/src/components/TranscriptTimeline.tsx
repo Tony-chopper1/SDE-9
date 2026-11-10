@@ -19,8 +19,13 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
 
+  // Ensure segments are always ordered chronologically by ascending start_time
+  const sortedSegments = useMemo(() => {
+    return [...segments].sort((a, b) => a.start_time - b.start_time);
+  }, [segments]);
+
   // Virtualization window calculations
-  const totalCount = segments.length;
+  const totalCount = sortedSegments.length;
   const isVirtualized = totalCount > 25;
 
   const { startIndex, endIndex, offsetY, totalHeight } = useMemo(() => {
@@ -47,8 +52,8 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
   }, [totalCount, isVirtualized, scrollTop, itemHeight, viewportHeight]);
 
   const visibleSegments = useMemo(() => {
-    return segments.slice(startIndex, endIndex);
-  }, [segments, startIndex, endIndex]);
+    return sortedSegments.slice(startIndex, endIndex);
+  }, [sortedSegments, startIndex, endIndex]);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
@@ -105,7 +110,7 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
 
       {/* Screen reader live announcements */}
       <div aria-live="polite" aria-atomic="false" className="sr-only">
-        {totalCount > 0 ? `Latest transcript: ${segments[totalCount - 1].text}` : ''}
+        {totalCount > 0 ? `Latest transcript: ${sortedSegments[totalCount - 1].text}` : ''}
       </div>
 
       <div

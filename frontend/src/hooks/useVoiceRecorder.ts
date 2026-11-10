@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ISpeechRecognition,
   ISpeechRecognitionConstructor,
+  MicPermissionState,
   SpeechRecognitionEvent,
   SpeechRecognitionErrorEvent,
 } from '../types/speech';
@@ -21,6 +22,12 @@ export function useVoiceRecorder(options: UseVoiceRecorderOptions = {}) {
   const [isRecording, setIsRecording] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [micPermission, setMicPermission] = useState<MicPermissionState>(() => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      return 'unsupported';
+    }
+    return 'prompt';
+  });
 
   const recognitionRef = useRef<ISpeechRecognition | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -30,6 +37,55 @@ export function useVoiceRecorder(options: UseVoiceRecorderOptions = {}) {
   const finalTranscriptRef = useRef('');
   const currentFullTranscriptRef = useRef('');
   const shouldSaveOnEndRef = useRef(false);
+
+  // Sync with browser Permissions API when available
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setMicPermission('unsupported');
+      return;
+    }
+
+    let isMounted = true;
+    let permStatus: PermissionStatus | null = null;
+
+    const checkPermissionApi = async () => {
+      try {
+        if (navigator.permissions && typeof navigator.permissions.query === 'function') {
+          const status = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+          if (!isMounted) return;
+          permStatus = status;
+
+          const mapState = (state: PermissionState): MicPermissionState => {
+            if (state === 'granted') return 'granted';
+            if (state === 'denied') return 'denied';
+            return 'prompt';
+          };
+
+          setMicPermission(mapState(status.state));
+
+          status.onchange = () => {
+            if (!isMounted) return;
+            setMicPermission(mapState(status.state));
+          };
+        }
+      } catch {
+        // Permissions API query for microphone not supported or rejected;
+        // fallback gracefully to prompt
+        if (isMounted) {
+          setMicPermission((prev) => (prev === 'unsupported' ? 'unsupported' : 'prompt'));
+        }
+      }
+    };
+
+    checkPermissionApi();
+
+    return () => {
+      isMounted = false;
+      if (permStatus) {
+        permStatus.onchange = null;
+      }
+    };
+  }, []);
 
   // Stop active media stream tracks
   const cleanupStream = useCallback(() => {
@@ -48,11 +104,13 @@ export function useVoiceRecorder(options: UseVoiceRecorderOptions = {}) {
       shouldSaveOnEndRef.current = false;
 
       if (!navigator.mediaDevices?.getUserMedia) {
+        setMicPermission('unsupported');
         throw new Error('Microphone access is not supported in this browser.');
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
+      setMicPermission('granted');
 
       // Initialize MediaRecorder
       if (typeof MediaRecorder !== 'undefined') {
@@ -75,7 +133,7 @@ export function useVoiceRecorder(options: UseVoiceRecorderOptions = {}) {
 
       setIsRecording(true);
 
-      // Check SpeechRecognition
+      // Check SpeechRecognition (distinct from microphone permission)
       const win = window as unknown as WindowWithSpeech;
       const SpeechRecognitionClass = win.SpeechRecognition || win.webkitSpeechRecognition;
 
@@ -109,6 +167,9 @@ export function useVoiceRecorder(options: UseVoiceRecorderOptions = {}) {
         const errMsg = event.error === 'not-allowed'
           ? 'Microphone permission was denied. Please allow microphone access in your browser settings.'
           : `Speech recognition error: ${event.error}`;
+        if (event.error === 'not-allowed') {
+          setMicPermission('denied');
+        }
         setErrorMessage(errMsg);
       };
 
@@ -125,8 +186,12 @@ export function useVoiceRecorder(options: UseVoiceRecorderOptions = {}) {
     } catch (err: unknown) {
       cleanupStream();
       setIsRecording(false);
+      const isDenied = err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError');
+      if (isDenied) {
+        setMicPermission('denied');
+      }
       const message = err instanceof Error
-        ? (err.name === 'NotAllowedError'
+        ? (isDenied
             ? 'Microphone permission was denied. Please allow microphone access to record.'
             : err.message)
         : 'Unable to access microphone. Please verify permissions.';
@@ -178,6 +243,7 @@ export function useVoiceRecorder(options: UseVoiceRecorderOptions = {}) {
     liveTranscript,
     errorMessage,
     setErrorMessage,
+    micPermission,
     startRecording,
     stopRecording,
   };

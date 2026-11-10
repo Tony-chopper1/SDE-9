@@ -1,10 +1,12 @@
 import React from 'react';
+import { MicPermissionState } from '../types/speech';
 
 export interface VoiceControlsProps {
   isRecording: boolean;
   onToggleRecording: () => void;
   errorMessage?: string;
   onDismissError?: () => void;
+  micPermission?: MicPermissionState;
 }
 
 export const VoiceControls: React.FC<VoiceControlsProps> = ({
@@ -12,6 +14,7 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
   onToggleRecording,
   errorMessage,
   onDismissError,
+  micPermission = 'prompt',
 }) => {
   return (
     <section className="voice-controls-card" aria-label="Voice Capture Controls">
@@ -21,12 +24,27 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
           <h2 className="card-title">Recording Studio</h2>
         </div>
 
-        <div className="status-badge" role="status">
-          <span
-            className={`status-indicator-dot ${isRecording ? 'is-recording' : 'is-standby'}`}
-            aria-hidden="true"
-          />
-          <span className="status-text">{isRecording ? 'RECORDING' : 'STANDBY'}</span>
+        <div className="card-header-badges">
+          {/* Accessible Microphone Permission State Badge */}
+          <div
+            className={`permission-badge perm-${micPermission}`}
+            role="status"
+            aria-label={`Microphone permission: ${micPermission}`}
+          >
+            <span
+              className={`perm-dot perm-dot-${micPermission}`}
+              aria-hidden="true"
+            />
+            <span className="perm-label">MIC: {micPermission.toUpperCase()}</span>
+          </div>
+
+          <div className="status-badge" role="status">
+            <span
+              className={`status-indicator-dot ${isRecording ? 'is-recording' : 'is-standby'}`}
+              aria-hidden="true"
+            />
+            <span className="status-text">{isRecording ? 'RECORDING' : 'STANDBY'}</span>
+          </div>
         </div>
       </div>
 
