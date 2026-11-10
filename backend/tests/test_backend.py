@@ -1,3 +1,4 @@
+
 """
 Unit Tests for Backend API Gateway
 Assigned Member: Apeksha KT (feature/backend-fastapi - Task W5)
@@ -10,7 +11,7 @@ from backend.main import app, unexpected_exception_handler
 
 client = TestClient(app)
 
-# Separate test application for checking unexpected server errors.
+# Separate app to test unexpected exception handling
 error_test_app = FastAPI()
 
 
@@ -31,14 +32,11 @@ error_client = TestClient(
 
 
 def test_health_check_endpoint():
-    """Verify that the health check endpoint returns 200 and healthy status."""
     response = client.get("/api/v1/health")
 
     assert response.status_code == 200
-    data = response.json()
-
-    assert data["success"] is True
-    assert data["data"]["status"] == "healthy"
+    assert response.json()["success"] is True
+    assert response.json()["data"]["status"] == "healthy"
     assert "X-Response-Time" in response.headers
     assert response.headers["X-Request-ID"]
     assert response.headers["X-Correlation-ID"]

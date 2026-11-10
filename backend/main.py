@@ -1,3 +1,4 @@
+
 """
 SDK-9 AI Voice Co-Pilot - Backend Gateway
 Owner: Apeksha KT (feature/backend-fastapi - Task W5)
@@ -15,14 +16,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.api.sessions import router as session_router
+from backend.api.events import router as event_router
 from backend.schemas.api_schemas import (
     StandardResponse,
     APIError,
     ChatRequest,
 )
 
+# Load environment variables
 load_dotenv()
 
+# Validate mock mode configuration
 mock_mode_value = os.getenv("MOCK_MODE", "true").strip().lower()
 
 if mock_mode_value not in {"true", "1", "yes", "false", "0", "no"}:
@@ -40,6 +44,7 @@ app = FastAPI(
 app.state.mock_mode = mock_mode_value in {"true", "1", "yes"}
 
 
+# Request logging and correlation ID middleware
 @app.middleware("http")
 async def request_logging_middleware(
     request: Request,
@@ -57,7 +62,7 @@ async def request_logging_middleware(
 
     response = await call_next(request)
 
-    duration_ms = (time.perf_counter() - start_time) * 1000.0
+    duration_ms = (time.perf_counter() - start_time) * 1000
 
     logger.info(
         "request_completed method=%s path=%s status=%s "
@@ -77,6 +82,7 @@ async def request_logging_middleware(
     return response
 
 
+# Standard safe error response
 def create_error_response(
     request: Request,
     status_code: int,
@@ -108,12 +114,15 @@ def create_error_response(
         headers={
             "X-Correlation-ID": correlation_id,
             "X-Request-ID": getattr(
-                request.state, "request_id", correlation_id
+                request.state,
+                "request_id",
+                correlation_id,
             ),
         },
     )
 
 
+# HTTP exception handler
 @app.exception_handler(HTTPException)
 async def http_exception_handler(
     request: Request,
@@ -142,6 +151,7 @@ async def http_exception_handler(
     )
 
 
+# Request validation exception handler
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
     request: Request,
@@ -149,7 +159,9 @@ async def validation_exception_handler(
 ):
     safe_errors = [
         {
-            "location": [str(part) for part in item.get("loc", [])],
+            "location": [
+                str(part) for part in item.get("loc", [])
+            ],
             "type": item.get("type", "validation_error"),
         }
         for item in exc.errors()
@@ -165,6 +177,7 @@ async def validation_exception_handler(
     )
 
 
+# Unexpected exception handler
 @app.exception_handler(Exception)
 async def unexpected_exception_handler(
     request: Request,
@@ -190,6 +203,7 @@ async def unexpected_exception_handler(
     )
 
 
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -198,9 +212,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Register API routers
 app.include_router(session_router)
+app.include_router(event_router)
 
 
+# Health check endpoint
 @app.get("/api/v1/health", response_model=StandardResponse)
 def health_check():
     return StandardResponse(
@@ -213,6 +231,7 @@ def health_check():
     )
 
 
+# Readiness endpoints
 @app.get("/api/v1/ready", response_model=StandardResponse)
 @app.get("/ready", response_model=StandardResponse)
 def readiness_check():
@@ -226,6 +245,7 @@ def readiness_check():
     )
 
 
+# AI chat endpoint
 @app.post("/api/v1/ai/chat", response_model=StandardResponse)
 def chat_endpoint(req: ChatRequest):
     raise HTTPException(
@@ -234,6 +254,7 @@ def chat_endpoint(req: ChatRequest):
     )
 
 
+# Application entry point
 if __name__ == "__main__":
     from backend.launcher import run_server
 
