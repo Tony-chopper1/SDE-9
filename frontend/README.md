@@ -34,6 +34,7 @@ frontend/src/
 │   └── speech.ts                    # Complete Web Speech API & session TypeScript types
 ├── components/
 │   ├── AppShell.tsx                 # Header, sidebar, status pill, skip link
+│   ├── EngineStatusPanel.tsx        # Compact sidebar engine, latency, & speech API status
 │   ├── VoiceControls.tsx            # Mic toggle, audio waveform visualizer, error alerts
 │   ├── TranscriptTimeline.tsx       # Virtualized timeline for 1,000+ segments
 │   ├── SessionHistory.tsx           # Past recordings list, download, and delete
@@ -41,6 +42,7 @@ frontend/src/
 └── __tests__/
     ├── api_client.test.ts           # REST client unit tests (health, sessions, chat)
     ├── useVoiceRecorder.test.ts     # Hook tests (audio streams, speech events, errors)
+    ├── EngineStatusPanel.test.tsx   # Sidebar engine status panel tests
     ├── TranscriptTimeline.test.tsx  # Timeline tests (empty state, segments, 1000+ virtualization)
     ├── ErrorBoundary.test.tsx       # Error boundary fallback tests
     └── App.test.tsx                 # App integration tests (start/stop, permissions, history)
@@ -120,7 +122,7 @@ npm run test:coverage
 
 ## 6. Test Results & Coverage Report
 
-The project includes 24 tests across 5 test suites with **92.88% statement coverage**:
+The project includes 29 tests across 6 test suites with **92.68% statement coverage**:
 
 ```
  % Coverage report from v8

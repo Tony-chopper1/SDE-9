@@ -114,4 +114,48 @@ describe('TranscriptTimeline Component', () => {
     expect(liveRegion).toBeTruthy();
     expect(liveRegion?.textContent).toContain('Latest transcript: Speech recognition live test');
   });
+
+  it('renders revision badges and appropriate visual confidence tiers', () => {
+    const mockSegments: TranscriptSegment[] = [
+      {
+        id: 'seg-high',
+        text: 'High confidence final segment.',
+        confidence: 0.95,
+        start_time: 0,
+        end_time: 1.8,
+        is_final: true,
+        revision: 3,
+      },
+      {
+        id: 'seg-med',
+        text: 'Medium confidence segment.',
+        confidence: 0.75,
+        start_time: 2.0,
+        end_time: 3.5,
+        is_final: false,
+        revision: 2,
+      },
+      {
+        id: 'seg-low',
+        text: 'Low confidence noisy segment.',
+        confidence: 0.55,
+        start_time: 4.0,
+        end_time: 5.2,
+        is_final: false,
+        revision: 1,
+      },
+    ];
+
+    const { container } = render(<TranscriptTimeline segments={mockSegments} />);
+
+    // Check revision badges
+    expect(screen.getByText('Rev 3')).toBeTruthy();
+    expect(screen.getByText('Rev 2')).toBeTruthy();
+    expect(screen.getByText('Rev 1')).toBeTruthy();
+
+    // Check confidence levels
+    expect(container.querySelector('.badge-conf-high')).toBeTruthy();
+    expect(container.querySelector('.badge-conf-med')).toBeTruthy();
+    expect(container.querySelector('.badge-conf-low')).toBeTruthy();
+  });
 });

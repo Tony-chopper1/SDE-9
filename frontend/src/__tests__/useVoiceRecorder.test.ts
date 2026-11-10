@@ -9,6 +9,30 @@ import {
 
 describe('useVoiceRecorder hook', () => {
   let createdRecognition: MockRecognition | null = null;
+  let createdMediaRecorder: MockMediaRecorder | null = null;
+
+  class MockMediaRecorder {
+    state: string = 'inactive';
+    start = vi.fn(() => {
+      this.state = 'recording';
+    });
+    pause = vi.fn(() => {
+      this.state = 'paused';
+    });
+    resume = vi.fn(() => {
+      this.state = 'recording';
+    });
+    stop = vi.fn(() => {
+      this.state = 'inactive';
+      this.onstop?.(new Event('stop'));
+    });
+    ondataavailable: ((event: BlobEvent) => void) | null = null;
+    onstop: ((event: Event) => void) | null = null;
+
+    constructor() {
+      createdMediaRecorder = this;
+    }
+  }
 
   class MockRecognition implements ISpeechRecognition {
     lang = 'en-US';
@@ -35,6 +59,7 @@ describe('useVoiceRecorder hook', () => {
 
   beforeEach(() => {
     createdRecognition = null;
+    createdMediaRecorder = null;
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: {
@@ -45,6 +70,7 @@ describe('useVoiceRecorder hook', () => {
     });
 
     vi.stubGlobal('SpeechRecognition', MockRecognition);
+    vi.stubGlobal('MediaRecorder', MockMediaRecorder);
   });
 
   afterEach(() => {
@@ -124,5 +150,188 @@ describe('useVoiceRecorder hook', () => {
 
     expect(result.current.isRecording).toBe(false);
     expect(result.current.errorMessage).toContain('Microphone access is not supported');
+  });
+
+  it('handles pause and resume of voice recording correctly', async () => {
+    const { result } = renderHook(() => useVoiceRecorder());
+
+    await act(async () => {
+      await result.current.startRecording();
+    });
+
+    expect(result.current.recordingState).toBe('recording');
+    expect(result.current.isPaused).toBe(false);
+    expect(result.current.isRecording).toBe(true);
+    expect(createdMediaRecorder?.state).toBe('recording');
+
+    // Pause recording
+    act(() => {
+      result.current.pauseRecording();
+    });
+
+    expect(result.current.recordingState).toBe('paused');
+    expect(result.current.isPaused).toBe(true);
+    expect(result.current.isRecording).toBe(true);
+    expect(createdMediaRecorder?.pause).toHaveBeenCalled();
+
+    // Resume recording
+    act(() => {
+      result.current.resumeRecording();
+    });
+
+    expect(result.current.recordingState).toBe('recording');
+    expect(result.current.isPaused).toBe(false);
+    expect(createdMediaRecorder?.resume).toHaveBeenCalled();
+
+    // Stop recording
+    act(() => {
+      result.current.stopRecording();
+    });
+
+    expect(result.current.recordingState).toBe('idle');
+    expect(result.current.isRecording).toBe(false);
+  });
+
+  it('tracks interim revisions without changing the active segment ID', async () => {
+    const segmentUpdates: unknown[] = [];
+    const { result } = renderHook(() =>
+      useVoiceRecorder({
+        onSegmentUpdate: (seg) => segmentUpdates.push({ ...seg }),
+      })
+    );
+
+    await act(async () => {
+      await result.current.startRecording();
+    });
+
+    // 1st interim result
+    act(() => {
+      if (createdRecognition?.onresult) {
+        createdRecognition.onresult({
+          resultIndex: 0,
+          results: [
+            {
+              isFinal: false,
+              length: 1,
+              0: { transcript: 'Interim step one', confidence: 0.88 },
+            },
+          ],
+        } as unknown as SpeechRecognitionEvent);
+      }
+    });
+
+    expect(result.current.liveRevision).toBe(1);
+    expect(result.current.currentSegment?.revision).toBe(1);
+    expect(result.current.currentSegment?.is_final).toBe(false);
+    const activeSegmentId = result.current.currentSegment?.id;
+    expect(activeSegmentId).toBeTruthy();
+
+    // 2nd interim refinement (same utterance)
+    act(() => {
+      if (createdRecognition?.onresult) {
+        createdRecognition.onresult({
+          resultIndex: 0,
+          results: [
+            {
+              isFinal: false,
+              length: 1,
+              0: { transcript: 'Interim step one refined', confidence: 0.91 },
+            },
+          ],
+        } as unknown as SpeechRecognitionEvent);
+      }
+    });
+
+    expect(result.current.liveRevision).toBe(2);
+    expect(result.current.currentSegment?.revision).toBe(2);
+    // Segment ID should NOT change across revisions of same segment!
+    expect(result.current.currentSegment?.id).toBe(activeSegmentId);
+
+    // Final result
+    act(() => {
+      if (createdRecognition?.onresult) {
+        createdRecognition.onresult({
+          resultIndex: 0,
+          results: [
+            {
+              isFinal: true,
+              length: 1,
+              0: { transcript: 'Interim step one completed.', confidence: 0.97 },
+            },
+          ],
+        } as unknown as SpeechRecognitionEvent);
+      }
+    });
+
+    expect(result.current.currentSegment?.is_final).toBe(true);
+    expect(result.current.currentSegment?.id).toBe(activeSegmentId);
+  });
+
+  it('preserves transcripts across pause and resume without text loss or duplicate segments', async () => {
+    const onSessionComplete = vi.fn();
+    const { result } = renderHook(() => useVoiceRecorder({ onSessionComplete }));
+
+    await act(async () => {
+      await result.current.startRecording();
+    });
+
+    // Speak first sentence
+    act(() => {
+      if (createdRecognition?.onresult) {
+        createdRecognition.onresult({
+          resultIndex: 0,
+          results: [
+            {
+              isFinal: true,
+              length: 1,
+              0: { transcript: 'First sentence before pause.', confidence: 0.98 },
+            },
+          ],
+        } as unknown as SpeechRecognitionEvent);
+      }
+    });
+
+    expect(result.current.liveTranscript).toBe('First sentence before pause.');
+
+    // Pause recording
+    act(() => {
+      result.current.pauseRecording();
+    });
+    expect(result.current.recordingState).toBe('paused');
+
+    // Resume recording
+    act(() => {
+      result.current.resumeRecording();
+    });
+    expect(result.current.recordingState).toBe('recording');
+
+    // Speak second sentence after resume
+    act(() => {
+      if (createdRecognition?.onresult) {
+        createdRecognition.onresult({
+          resultIndex: 0,
+          results: [
+            {
+              isFinal: true,
+              length: 1,
+              0: { transcript: 'Second sentence after resume.', confidence: 0.96 },
+            },
+          ],
+        } as unknown as SpeechRecognitionEvent);
+      }
+    });
+
+    expect(result.current.liveTranscript).toBe(
+      'First sentence before pause. Second sentence after resume.'
+    );
+
+    // Stop recording
+    act(() => {
+      result.current.stopRecording();
+    });
+
+    expect(onSessionComplete).toHaveBeenCalledWith(
+      'First sentence before pause. Second sentence after resume.'
+    );
   });
 });

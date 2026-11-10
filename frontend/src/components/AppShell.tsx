@@ -1,10 +1,12 @@
 import { ReactNode } from 'react';
+import { EngineStatusPanel, EngineStatusData } from './EngineStatusPanel';
 
 export interface AppShellProps {
   children: ReactNode;
   activeTab: 'studio' | 'transcripts' | 'history';
   onTabChange: (tab: 'studio' | 'transcripts' | 'history') => void;
   serviceOnline?: boolean;
+  engineStatus?: EngineStatusData;
 }
 
 export const AppShell: React.FC<AppShellProps> = ({
@@ -12,6 +14,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   activeTab,
   onTabChange,
   serviceOnline = true,
+  engineStatus,
 }) => {
   return (
     <div className="saas-app-shell">
@@ -77,6 +80,9 @@ export const AppShell: React.FC<AppShellProps> = ({
             </li>
           </ul>
         </nav>
+
+        {/* Engine Status Panel */}
+        <EngineStatusPanel status={engineStatus} />
 
         <div className="sidebar-footer">
           <div className="user-profile-badge">

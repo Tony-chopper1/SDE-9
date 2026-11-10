@@ -3,10 +3,12 @@ import { AppShell } from './components/AppShell';
 import { VoiceControls } from './components/VoiceControls';
 import { TranscriptTimeline } from './components/TranscriptTimeline';
 import { SessionHistory } from './components/SessionHistory';
+import { ContextSourcePanel } from './components/ContextSourcePanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { TranscriptSegment } from './api_client';
+import { TranscriptSegment, TypedVoicebotClient } from './api_client';
 import { RecordingSession } from './types/speech';
 import { useVoiceRecorder } from './hooks/useVoiceRecorder';
+import { EngineStatusData } from './components/EngineStatusPanel';
 
 const STORAGE_KEY = 'academia-voice-history';
 const LEGACY_STORAGE_KEY = 'echo-recording-history';
@@ -15,6 +17,56 @@ export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'studio' | 'transcripts' | 'history'>('studio');
   const [recordingHistory, setRecordingHistory] = useState<RecordingSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+
+  // Screen Context toggle state - strictly defaults to OFF for privacy
+  const [isScreenContextEnabled, setIsScreenContextEnabled] = useState(false);
+
+  // Engine status reported by backend health check and voice runtime
+  const [engineStatus, setEngineStatus] = useState<EngineStatusData>({
+    engineName: null,
+    latencyMs: null,
+    speechApiStatus: 'unknown',
+    speechApiLabel: 'Not reported',
+    backendStatus: 'unknown',
+  });
+
+  // Query backend health to retrieve actual engine name and measured round-trip latency
+  useEffect(() => {
+    let isMounted = true;
+    const client = new TypedVoicebotClient();
+
+    const fetchEngineHealth = async () => {
+      try {
+        const startTime = performance.now();
+        const res = await client.checkHealth();
+        const latency = Math.round(performance.now() - startTime);
+
+        if (isMounted) {
+          const isHealthy = res.data?.status === 'healthy';
+          setEngineStatus((prev) => ({
+            ...prev,
+            engineName: res.data?.service || null,
+            latencyMs: latency,
+            backendStatus: isHealthy ? 'online' : 'unknown',
+          }));
+        }
+      } catch {
+        if (isMounted) {
+          setEngineStatus((prev) => ({
+            ...prev,
+            engineName: null,
+            latencyMs: null,
+            backendStatus: 'offline',
+          }));
+        }
+      }
+    };
+
+    fetchEngineHealth();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Active timeline segments for visualization
   const [segments, setSegments] = useState<TranscriptSegment[]>([
@@ -25,6 +77,7 @@ export const AppContent: React.FC = () => {
       start_time: 0,
       end_time: 2,
       is_final: true,
+      revision: 1,
     },
   ]);
 
@@ -81,6 +134,7 @@ export const AppContent: React.FC = () => {
         start_time: Math.max(0, segments.length * 2),
         end_time: Math.max(0, segments.length * 2) + Math.ceil(clean.length / 15),
         is_final: true,
+        revision: 1,
       };
       setSegments((prev) => [...prev, newSegment]);
     },
@@ -89,11 +143,17 @@ export const AppContent: React.FC = () => {
 
   const {
     isRecording,
+    isPaused,
+    recordingState,
     liveTranscript,
+    liveRevision,
+    currentSegment,
     errorMessage,
     setErrorMessage,
     startRecording,
     stopRecording,
+    pauseRecording,
+    resumeRecording,
   } = useVoiceRecorder({
     onSessionComplete: handleSessionComplete,
   });
@@ -112,6 +172,47 @@ export const AppContent: React.FC = () => {
       startRecording();
     }
   }, [isRecording, startRecording, stopRecording]);
+
+  // Accessible Keyboard Shortcuts (Alt+P, Alt+R, Alt+C)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore shortcuts if the user is typing in an input or textarea
+      const active = document.activeElement;
+      if (
+        active &&
+        (active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          (active as HTMLElement).isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.altKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        if (recordingState === 'recording') {
+          pauseRecording();
+        } else if (recordingState === 'paused') {
+          resumeRecording();
+        }
+      } else if (e.altKey && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        if (recordingState === 'idle') {
+          setSelectedSessionId(null);
+          startRecording();
+        } else {
+          stopRecording();
+        }
+      } else if (e.altKey && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        setIsScreenContextEnabled((prev) => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [recordingState, pauseRecording, resumeRecording, startRecording, stopRecording]);
 
   // Download transcript as file
   const handleDownloadTranscript = useCallback((session?: RecordingSession) => {
@@ -155,7 +256,7 @@ export const AppContent: React.FC = () => {
     [persistHistory, recordingHistory, selectedSessionId]
   );
 
-  // Dynamic segments to render in timeline
+  // Dynamic segments to render in timeline (with in-place interim updates and revisions)
   const activeTimelineSegments = useMemo(() => {
     if (selectedSession) {
       return [
@@ -166,30 +267,63 @@ export const AppContent: React.FC = () => {
           start_time: 0,
           end_time: Math.max(2, Math.ceil(selectedSession.transcript.length / 15)),
           is_final: true,
+          revision: 1,
         },
       ];
     }
 
-    if (isRecording && liveTranscript) {
+    if (isRecording && (currentSegment?.text || liveTranscript)) {
+      const interimText = currentSegment?.text || liveTranscript;
       const interimSegment: TranscriptSegment = {
-        id: 'interim-live',
-        text: liveTranscript,
-        confidence: 0.88,
-        start_time: segments.length * 2,
-        end_time: segments.length * 2 + 3,
-        is_final: false,
+        id: currentSegment?.id || 'interim-live',
+        text: interimText,
+        confidence: currentSegment?.confidence ?? 0.88,
+        start_time: currentSegment?.start_time ?? (segments.length * 2),
+        end_time: currentSegment?.end_time ?? (segments.length * 2 + 3),
+        is_final: currentSegment ? currentSegment.is_final : false,
+        revision: currentSegment?.revision ?? liveRevision,
       };
       return [...segments, interimSegment];
     }
 
     return segments;
-  }, [selectedSession, isRecording, liveTranscript, segments]);
+  }, [selectedSession, isRecording, currentSegment, liveTranscript, segments, liveRevision]);
+
+  // Derive Speech API status from live voice recorder runtime state
+  const computedEngineStatus = useMemo<EngineStatusData>(() => {
+    let speechApiStatus: 'online' | 'offline' | 'unknown' = 'unknown';
+    let speechApiLabel = 'Not reported';
+
+    if (recordingState === 'recording') {
+      speechApiStatus = 'online';
+      speechApiLabel = 'Active';
+    } else if (recordingState === 'paused') {
+      speechApiStatus = 'online';
+      speechApiLabel = 'Paused';
+    } else if (
+      errorMessage &&
+      (errorMessage.toLowerCase().includes('microphone') ||
+       errorMessage.toLowerCase().includes('speech recognition'))
+    ) {
+      speechApiStatus = 'offline';
+      speechApiLabel = 'Offline';
+    }
+
+    return {
+      ...engineStatus,
+      speechApiStatus,
+      speechApiLabel,
+    };
+  }, [engineStatus, recordingState, errorMessage]);
+
+  const isServiceOnline = computedEngineStatus.backendStatus !== 'offline';
 
   return (
     <AppShell
       activeTab={activeTab}
       onTabChange={setActiveTab}
-      serviceOnline={true}
+      serviceOnline={isServiceOnline}
+      engineStatus={computedEngineStatus}
     >
       {/* Enterprise Hero Banner */}
       <section className="hero-banner" aria-label="Overview Banner">
@@ -199,8 +333,7 @@ export const AppContent: React.FC = () => {
             AI Voice <span className="hero-highlight">Co-Pilot</span>
           </h1>
           <p className="hero-description">
-            Context-aware voice assistance and real-time speech transcription designed for
-            seamless workspace productivity.
+            Context-aware voice assistance, real-time speech transcription, and multimodal workspace reasoning.
           </p>
         </div>
       </section>
@@ -211,7 +344,13 @@ export const AppContent: React.FC = () => {
         <div className="grid-column-left">
           <VoiceControls
             isRecording={isRecording}
+            recordingState={recordingState}
+            isPaused={isPaused}
+            isOffline={!isServiceOnline}
             onToggleRecording={handleToggleRecording}
+            onPause={pauseRecording}
+            onResume={resumeRecording}
+            onStop={stopRecording}
             errorMessage={errorMessage}
             onDismissError={() => setErrorMessage('')}
           />
@@ -260,6 +399,16 @@ export const AppContent: React.FC = () => {
             </div>
           </section>
         </div>
+      </div>
+
+      {/* Multimodal Context & Source Panel Section */}
+      <div className="context-section-wrapper">
+        <ContextSourcePanel
+          sessionId={selectedSessionId || undefined}
+          isScreenContextEnabled={isScreenContextEnabled}
+          onToggleScreenContext={setIsScreenContextEnabled}
+          isOffline={!isServiceOnline}
+        />
       </div>
 
       {/* Session History Section */}
