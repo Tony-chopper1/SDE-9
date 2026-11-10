@@ -392,4 +392,67 @@ describe('App Component', () => {
       expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
     });
   });
+
+  it('displays the mock mode banner when backend reports mock_mode: true', async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      const banner = screen.getByRole('status', { name: 'Mock Mode Active' });
+      expect(banner).toBeTruthy();
+      expect(screen.getByText('MOCK MODE')).toBeTruthy();
+      expect(
+        screen.getByText(/Backend services are operating in simulated test mode/i)
+      ).toBeTruthy();
+    });
+  });
+
+  it('does not display the mock mode banner when backend reports mock_mode: false', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: {
+          status: 'healthy',
+          service: 'sdk-9-voicebot',
+          mock_mode: false,
+        },
+        timestamp: Date.now(),
+      }),
+    } as Response);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('status', { name: 'Mock Mode Active' })).toBeNull();
+    expect(screen.queryByText('MOCK MODE')).toBeNull();
+  });
+
+  it('does not display the mock mode banner when backend health check fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('status', { name: 'Mock Mode Active' })).toBeNull();
+      expect(screen.queryByText('MOCK MODE')).toBeNull();
+    });
+  });
+
+  it('displays the microphone permission badge in voice controls', async () => {
+    render(<App />);
+
+    const badge = screen.getByRole('status', {
+      name: /Microphone permission:/i,
+    });
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toContain('MIC:');
+
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
+  });
 });

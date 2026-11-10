@@ -3,6 +3,8 @@
  * Eliminates 'any' types across voice capture modules.
  */
 
+export type MicPermissionState = 'prompt' | 'granted' | 'denied' | 'unsupported';
+
 export interface SpeechRecognitionAlternativeItem {
   readonly transcript: string;
   readonly confidence: number;

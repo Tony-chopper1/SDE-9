@@ -49,6 +49,50 @@ describe('TranscriptTimeline Component', () => {
     expect(screen.getByText('Listening...')).toBeTruthy();
   });
 
+  it('renders segments in chronological order even when input is out of order', () => {
+    const unorderedSegments: TranscriptSegment[] = [
+      {
+        id: 'seg-third',
+        text: 'Third spoken statement',
+        confidence: 0.9,
+        start_time: 12.0,
+        end_time: 15.0,
+        is_final: true,
+      },
+      {
+        id: 'seg-first',
+        text: 'First spoken statement',
+        confidence: 0.95,
+        start_time: 1.0,
+        end_time: 3.0,
+        is_final: true,
+      },
+      {
+        id: 'seg-second',
+        text: 'Second spoken statement',
+        confidence: 0.92,
+        start_time: 5.5,
+        end_time: 8.0,
+        is_final: true,
+      },
+    ];
+
+    const { container } = render(<TranscriptTimeline segments={unorderedSegments} />);
+
+    const renderedTexts = Array.from(
+      container.querySelectorAll('.segment-text')
+    ).map((el) => el.textContent);
+
+    expect(renderedTexts).toEqual([
+      'First spoken statement',
+      'Second spoken statement',
+      'Third spoken statement',
+    ]);
+
+    const liveRegion = container.querySelector('[aria-live="polite"]');
+    expect(liveRegion?.textContent).toContain('Latest transcript: Third spoken statement');
+  });
+
   it('efficiently handles 1000+ entries using virtualization without DOM lag', () => {
     // Generate 1,200 segments
     const count = 1200;
