@@ -44,9 +44,11 @@ The TypeScript definitions in `packages/audio/types.ts` mirror the Python Pydant
 
 | Python Model (`models.py`) | TypeScript Definition (`types.ts`) | Data / Wire Type Mapping | Field Semantics & Contract Notes |
 | :--- | :--- | :--- | :--- |
-| `VADState(str, Enum)` | `const VADState = { ... } as const`<br>`type VADState` | `string` union: `'SILENCE' \| 'SPEECH_START' \| 'SPEECH' \| 'SPEECH_END'` | Identical enum values for tracking speech/silence transition states. |
-| `AudioConfig(BaseModel)` | `interface AudioConfig` | `sample_rate: number`<br>`bit_depth: number`<br>`channels: number`<br>`format: string`<br>`frame_duration_ms: number` | Stream configuration. Defaults: 16 kHz, 16-bit PCM, mono. `frame_duration_ms=30` is approved baseline; `20` is provisional STT. |
+| `AudioFormat(BaseModel)` | `interface AudioFormat` | `sample_rate: number`<br>`bit_depth: number`<br>`channels: number`<br>`format: string` | Format specification schema. Base class for `AudioConfig`. |
+| `AudioConfig(AudioFormat)` | `interface AudioConfig` | Extends `AudioFormat`<br>`frame_duration_ms: number` | Stream configuration. Defaults: 16 kHz, 16-bit PCM, mono. `frame_duration_ms=30` is baseline; `20` is provisional STT. |
 | `AudioFrame(BaseModel)` | `interface AudioFrame` | `data`: `Uint8Array \| ArrayBuffer \| string`<br>`timestamp`: `number` (epoch sec)<br>`sample_rate`: `number`<br>`frame_index`: `number`<br>`is_speech`: `boolean`<br>`timestamp_ms`: `number` (stream ms)<br>`timestamp_utc`: `string` (ISO 8601) | Discrete audio frame. Python `bytes` corresponds to `Uint8Array` in JS/TS or `base64` string in JSON serialization. |
+| `AudioChunk(AudioFrame)` | `interface AudioChunk` | Extends `AudioFrame`<br>`chunk_id?: string`<br>`chunk_index?: number` | Canonical schema for discrete audio chunks, interoperable with `AudioFrame`. |
+| `VADState(str, Enum)` | `const VADState = { ... } as const`<br>`type VADState` | `string` union: `'SILENCE' \| 'SPEECH_START' \| 'SPEECH' \| 'SPEECH_END'` | Identical enum values for tracking speech/silence transition states. |
 | `VADResult(BaseModel)` | `interface VADResult` | `is_speech: boolean`<br>`confidence: number`<br>`energy_db: number`<br>`metadata?: Record<string, unknown>` | Frame classification result with confidence score in `[0.0, 1.0]` and dBFS level. |
 | `VADEvent(BaseModel)` | `interface VADEvent` | `state: VADState`<br>`timestamp: number`<br>`energy_level: number`<br>`confidence: number`<br>`frame_index?: number`<br>`timestamp_ms?: number` | Internal VAD detection event tracking state transitions (`SILENCE`, `SPEECH_START`, `SPEECH`, `SPEECH_END`). |
 | `EventEnvelope(BaseModel)` | `interface EventEnvelope<T>` | `event_id: string`<br>`event_type: string`<br>`schema_version: string`<br>`session_id: string`<br>`correlation_id: string`<br>`timestamp: string`<br>`producer: string`<br>`payload: T` | Shared SDK-9 event envelope conforming to `docs/integration-contracts.md`. Produced via `vadEvent.to_envelope()`. |
@@ -93,6 +95,16 @@ Every frame produced by the audio module exposes the agreed fields:
 | `timestamp_ms` | `float` | Audio-relative timeline position advancing by frame duration (e.g. `0.0, 20.0, 40.0`). |
 | `frame_id` | `str` | Unique frame identifier string (e.g. `frame-a1b2c3d4e5`). |
 | `timestamp_utc` | `str` | ISO 8601 wall-clock UTC timestamp for logging/auditability. |
+
+---
+
+### 3.1 Deterministic Mock Microphone (Review Feedback)
+
+To eliminate run-to-run variations in automated test suites and downstream benchmarking:
+- **Deterministic Mathematical Waveforms**: Audio synthesis in `_generate_pcm_samples()` uses analytical multi-harmonic trigonometric equations ($f_0$ carrier and modulation envelope) rather than floating noise, guaranteeing reproducible PCM byte payloads.
+- **Configurable Seed (`seed: int = 42`)**: Eliminates non-deterministic system PRNG states. Provides seed-based frame ID generation (`frame-{sha256(seed:counter)[:10]}`) and an isolated instance PRNG (`self._rng = random.Random(seed)`).
+- **Fixed Default Epoch (`start_timestamp: float = 1793491200.0`)**: Defaults to `2026-11-01T00:00:00.000000+00:00` UTC. Timestamps advance deterministically by frame duration without querying `datetime.now()` or the system clock.
+- **Identical Outputs**: Two independent `MockMicrophoneSource` instances initialized with the same configuration and seed produce bit-for-bit identical audio payloads, metadata, and serialized dictionary outputs.
 
 ---
 
@@ -375,9 +387,9 @@ pytest packages/audio --cov=packages/audio --cov-report=term-missing
 ```
 
 ### Test Suite Structure
-1. **Week 1 Baseline Tests** (30 tests):
-   - `tests/unit/test_audio_schemas.py`: Configuration validation, frame sizing math (640B and 960B), rejection of empty frames as EOS, error envelopes, serialization.
-   - `tests/unit/test_mock_mic.py`: Deterministic byte reproduction, stream generators, pattern switching, explicit EOF return (`None`).
+1. **Week 1 Baseline Tests** (32 tests):
+   - `tests/unit/test_audio_schemas.py`: Configuration validation, frame sizing math (640B and 960B), rejection of empty frames as EOS, error envelopes, serialization, and `AudioFormat`/`AudioChunk` schema inheritance parity.
+   - `tests/unit/test_mock_mic.py`: Strict determinism verification across independent runs, deterministic byte reproduction, seed-based ID generation, stream generators, pattern switching, explicit EOF return (`None`).
    - `tests/unit/test_vad.py`: `MockVAD` scripting, `EnergyVAD` speech/silence separation, hangover smoothing.
    - `tests/unit/test_audio_cli.py`: Meter rendering, fast execution, error exit handling, main entrypoint.
    - `tests/integration/test_audio_pipeline.py`: Full end-to-end stream $\rightarrow$ VAD $\rightarrow$ Event envelope pipeline for 20ms and 30ms frames.
@@ -390,4 +402,4 @@ pytest packages/audio --cov=packages/audio --cov-report=term-missing
 4. **Day 14 Robustness Tests** (7 tests):
    - `tests/test_robustness.py` (7 tests): Audio sequence gaps, out-of-order jitter, ambient noise vs clicks vs speech, bursty arrivals, 20ms/30ms interoperability, and unblocking of threads on buffer closure.
 
-**Total**: 108 tests passing, $\ge 95\%$ test coverage across `packages/audio/`.
+**Total**: 110 tests passing, $\ge 95\%$ test coverage across `packages/audio/`.
