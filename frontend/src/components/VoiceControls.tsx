@@ -1,5 +1,5 @@
 import React from 'react';
-import { RecordingState } from '../types/speech';
+import { RecordingState, MicPermissionState } from '../types/speech';
 
 export interface VoiceControlsProps {
   isRecording: boolean;
@@ -15,6 +15,7 @@ export interface VoiceControlsProps {
   onPause?: () => void;
   onResume?: () => void;
   onStop?: () => void;
+  micPermission?: MicPermissionState;
 }
 
 export const VoiceControls: React.FC<VoiceControlsProps> = ({
@@ -29,6 +30,7 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
   onPause,
   onResume,
   onStop,
+  micPermission = 'prompt',
 }) => {
   // Determine effective state: explicit recordingState takes precedence; fallback to boolean props
   const effectiveState: RecordingState =
@@ -48,14 +50,29 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
           <h2 className="card-title">Recording Studio</h2>
         </div>
 
-        <div className="status-badge" role="status" aria-label={`Current state: ${displayStatus}`}>
-          <span
-            className={`status-indicator-dot ${
-              isCapturing ? 'is-recording' : isSuspended ? 'is-paused' : 'is-standby'
-            }`}
-            aria-hidden="true"
-          />
-          <span className="status-text">{displayStatus}</span>
+        <div className="card-header-badges">
+          {/* Accessible Microphone Permission State Badge */}
+          <div
+            className={`permission-badge perm-${micPermission}`}
+            role="status"
+            aria-label={`Microphone permission: ${micPermission}`}
+          >
+            <span
+              className={`perm-dot perm-dot-${micPermission}`}
+              aria-hidden="true"
+            />
+            <span className="perm-label">MIC: {micPermission.toUpperCase()}</span>
+          </div>
+
+          <div className="status-badge" role="status" aria-label={`Current state: ${displayStatus}`}>
+            <span
+              className={`status-indicator-dot ${
+                isCapturing ? 'is-recording' : isSuspended ? 'is-paused' : 'is-standby'
+              }`}
+              aria-hidden="true"
+            />
+            <span className="status-text">{displayStatus}</span>
+          </div>
         </div>
       </div>
 
