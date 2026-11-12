@@ -47,7 +47,9 @@ from packages.audio.mock_mic import (
     MockMicrophoneSource,
 )
 from packages.audio.models import (
+    AudioChunk,
     AudioConfig,
+    AudioFormat,
     AudioFrame,
     EventEnvelope,
     VADEvent,
@@ -63,7 +65,9 @@ from packages.audio.vad import (
 
 __all__ = [
     # Team starter interfaces
+    "AudioChunk",
     "AudioConfig",
+    "AudioFormat",
     "AudioFrame",
     "VADEvent",
     "VADState",
