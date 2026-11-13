@@ -4,7 +4,8 @@ Fake Transcriber Service
 Provides deterministic simulated speech-to-text transcription for local mock mode,
 reproducing both single-shot transcription and streaming partial chunks with dynamic confidence scoring.
 """
-import time
+from __future__ import annotations
+
 from typing import List
 from packages.speech_to_text.models import TranscriptSegment
 
@@ -24,8 +25,11 @@ class FakeTranscriberService:
         "Search for the latest benchmark results in our codebase.",       # UC-05 Research
     ]
 
-    def __init__(self, default_language: str = "en"):
-        self.default_language = default_language
+    DEFAULT_BASE_TIME: float = 0.0
+
+    def __init__(self, default_language: str = "en", default_base_time: float = 0.0):
+        self.default_language: str = default_language
+        self.default_base_time: float = default_base_time
 
     def calculate_confidence(
         self,
@@ -35,7 +39,7 @@ class FakeTranscriberService:
     ) -> float:
         """
         Confidence Scoring Logic:
-        Calculates a realistic confidence score (0.0 - 1.0) based on:
+        Calculates a realistic, deterministic confidence score (0.0 - 1.0) based on:
         1. Audio data completeness: Audio buffer size relative to standard 16kHz PCM (32,000 bytes/sec).
         2. Phrase linguistic complexity / word count.
         3. Interim vs. Final commitment status:
@@ -67,18 +71,23 @@ class FakeTranscriberService:
     ) -> List[TranscriptSegment]:
         """
         Converts simulated audio bytes into a final TranscriptSegment.
+
+        Deterministic execution:
+        When start_time_offset is <= 0, uses default_base_time (0.0) so repeated runs
+        produce byte-for-byte and timestamp-for-timestamp identical outputs.
         """
         if not audio_data:
             return []
 
-        phrase = self.MOCK_PHRASES[phrase_index % len(self.MOCK_PHRASES)]
-        base_time = start_time_offset if start_time_offset > 0 else time.time()
+        resolved_index = abs(phrase_index) % len(self.MOCK_PHRASES)
+        phrase = self.MOCK_PHRASES[resolved_index]
+        base_time = start_time_offset if start_time_offset > 0.0 else self.default_base_time
         duration = max(0.5, len(phrase) * 0.05)  # estimate ~50ms per character
 
         confidence = self.calculate_confidence(audio_data, phrase, is_final=True)
 
         segment = TranscriptSegment(
-            id=f"seg-{int(base_time * 1000)}",
+            id=f"seg-{resolved_index}-{int(base_time * 1000)}",
             text=phrase,
             confidence=confidence,
             start_time=round(base_time, 3),
@@ -96,12 +105,16 @@ class FakeTranscriberService:
         """
         Simulates word-by-word streaming STT.
         Emits interim partial segments followed by a final segment.
+
+        Deterministic execution:
+        When start_time_offset is <= 0, uses default_base_time (0.0).
         """
-        full_phrase = self.MOCK_PHRASES[phrase_index % len(self.MOCK_PHRASES)]
+        resolved_index = abs(phrase_index) % len(self.MOCK_PHRASES)
+        full_phrase = self.MOCK_PHRASES[resolved_index]
         words = full_phrase.split()
         segments: List[TranscriptSegment] = []
 
-        base_time = start_time_offset if start_time_offset > 0 else time.time()
+        base_time = start_time_offset if start_time_offset > 0.0 else self.default_base_time
         accumulated_words: List[str] = []
 
         # Dummy audio payload for confidence scoring simulation
@@ -122,7 +135,7 @@ class FakeTranscriberService:
 
             segments.append(
                 TranscriptSegment(
-                    id=f"stream-seg-{idx}",
+                    id=f"stream-seg-{resolved_index}-{idx}",
                     text=current_text,
                     confidence=confidence,
                     start_time=t_start,
