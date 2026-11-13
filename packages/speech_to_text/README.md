@@ -42,7 +42,7 @@ packages/speech_to_text/
 ├── cli.py               # Interactive CLI demonstration tool
 ├── types.ts             # TypeScript definitions for frontend contracts
 └── tests/
-    └── test_speech_to_text.py # Comprehensive unit and integration test suite (44 tests, 99% coverage)
+    └── test_speech_to_text.py # Comprehensive unit and integration test suite (54 tests, 99% coverage)
 ```
 
 ---
@@ -178,10 +178,10 @@ packages/speech_to_text/accumulator.py                    71      0   100%
 packages/speech_to_text/cli.py                            40      1    98%
 packages/speech_to_text/fake_transcriber.py               45      0   100%
 packages/speech_to_text/models.py                         56      0   100%
-packages/speech_to_text/tests/test_speech_to_text.py     349      0   100%
+packages/speech_to_text/tests/test_speech_to_text.py     432      0   100%
 --------------------------------------------------------------------------
-TOTAL                                                    565      1    99%
-============================== 44 passed in 1.65s ==============================
+TOTAL                                                    648      1    99%
+============================== 54 passed in 1.60s ==============================
 ```
 
 ---
@@ -193,6 +193,6 @@ TOTAL                                                    565      1    99%
 | **Transcript schemas compile without errors** | ✅ **PASSED** | Validated via `test_transcript_segment_validation`, Pydantic bounds, and `types.ts`. |
 | **Deterministic Fake Transcriber** | ✅ **PASSED** | Fixed base time (0.0) replaces `time.time()`; verified via `test_fake_transcriber_strictly_deterministic_without_offset`. |
 | **Accumulator handles ordering & interims** | ✅ **PASSED** | Validated via out-of-order, reverse, shuffled, and interim live update tests. |
-| **Test coverage > 80%** | ✅ **PASSED (99%)** | Achieves **99% test coverage** with 44 passing unit and integration tests. |
+| **Test coverage > 80%** | ✅ **PASSED (99%)** | Achieves **99% test coverage** with 54 passing unit and integration tests. |
 | **Documentation complete** | ✅ **PASSED** | Architecture diagram, component specs, and CLI instructions included. |
 | **No memory leaks on large transcript sets** | ✅ **PASSED** | Stress-tested via `test_memory_leak_stress_test` with 1,000 rapid segments. |

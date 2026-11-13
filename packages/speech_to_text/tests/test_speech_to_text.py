@@ -159,6 +159,26 @@ class TestTranscriptModels:
         assert event.event_type == "transcript.segment"
         assert event.segment.text == "Speech event"
 
+    def test_transcript_event_custom_event_type_and_timestamp(self):
+        """Verify custom event types and explicit timestamp on TranscriptEvent."""
+        custom_ts = 1700000000.5
+        event = TranscriptEvent(
+            event_type="transcript.finalized",
+            session_id="sess-custom-event",
+            utterance=AccumulatedUtterance(
+                id="utt-custom",
+                session_id="sess-custom-event",
+                full_text="Done speaking",
+                start_time=0.0,
+                end_time=2.0,
+                duration=2.0,
+            ),
+            timestamp=custom_ts,
+        )
+        assert event.event_type == "transcript.finalized"
+        assert event.timestamp == custom_ts
+        assert event.utterance.full_text == "Done speaking"
+
     def test_typescript_definitions_file_exists(self):
         """Verifies deliverable: Create TypeScript type definitions."""
         ts_path = os.path.join(
@@ -292,6 +312,58 @@ class TestFakeTranscriberService:
         # Last chunk should be final (is_final=True)
         assert chunks[-1].is_final is True
         assert "error" in chunks[-1].text.lower()
+
+    def test_transcribe_with_different_languages(self):
+        """Verifies language tag configuration on generated segments."""
+        service_es = FakeTranscriberService(default_language="es")
+        res_es = service_es.transcribe(b"\x00" * 3200, phrase_index=0)
+        assert res_es[0].language == "es"
+
+        service_fr = FakeTranscriberService(default_language="fr")
+        chunks_fr = service_fr.simulate_streaming_chunks(phrase_index=0)
+        assert all(c.language == "fr" for c in chunks_fr)
+
+    def test_confidence_calculation_boundary_penalties(self):
+        """Verify audio factor scaling across buffer size boundary conditions."""
+        service = FakeTranscriberService()
+        # Exactly 0 bytes
+        assert service.calculate_confidence(b"", "Test phrase") == 0.0
+        # 160 bytes: exactly half of 320 threshold -> factor 0.5
+        score_half = service.calculate_confidence(b"\x00" * 160, "Test phrase", is_final=True)
+        # 320 bytes: exactly at threshold -> factor 1.0
+        score_full = service.calculate_confidence(b"\x00" * 320, "Test phrase", is_final=True)
+        assert score_full > score_half
+        # Extremely large buffer (1MB) -> clamped to 1.0 maximum
+        score_large = service.calculate_confidence(b"\x00" * (1024 * 1024), "Test phrase with many words for bonus", is_final=True)
+        assert 0.0 <= score_large <= 1.0
+
+    def test_transcribe_all_mock_phrases(self):
+        """Verify every single mock phrase produces valid, complete segments."""
+        service = FakeTranscriberService()
+        dummy_audio = b"\x00" * 3200
+        for i, phrase in enumerate(service.MOCK_PHRASES):
+            res = service.transcribe(dummy_audio, phrase_index=i)
+            assert len(res) == 1
+            assert res[0].text == phrase
+            assert res[0].is_final is True
+            assert (res[0].end_time - res[0].start_time) > 0.0
+            assert 0.0 <= res[0].confidence <= 1.0
+
+    def test_streaming_chunks_all_phrases(self):
+        """Verify streaming chunk properties across all simulated phrases."""
+        service = FakeTranscriberService()
+        for i in range(len(service.MOCK_PHRASES)):
+            chunks = service.simulate_streaming_chunks(phrase_index=i, start_time_offset=10.0)
+            assert len(chunks) > 0
+            # All intermediate chunks must be interim
+            for c in chunks[:-1]:
+                assert c.is_final is False
+            # Final chunk must be committed
+            assert chunks[-1].is_final is True
+            assert chunks[-1].text == service.MOCK_PHRASES[i]
+            # Monotonic timestamps
+            for j in range(len(chunks) - 1):
+                assert chunks[j + 1].start_time >= chunks[j].start_time
 
 
 # =============================================================================
@@ -572,6 +644,67 @@ class TestSegmentAccumulator:
         assert len(utterance.segments) == 1000
         assert acc.count == 0
         assert acc.current_segments == []
+
+    def test_accumulator_multiple_interims_different_timestamps(self):
+        """Verify interim_text tracks advancing interim chunks with different IDs."""
+        acc = SegmentAccumulator(session_id="sess-adv-interim")
+        acc.add_segment(TranscriptSegment(id="chunk-1", text="Search", start_time=0.0, end_time=0.5, is_final=False))
+        assert acc.interim_text == "Search"
+
+        acc.add_segment(TranscriptSegment(id="chunk-2", text="files", start_time=0.5, end_time=1.0, is_final=False))
+        # Latest interim is chunk-2
+        assert acc.interim_text == "files"
+
+        # Finalizing resolves all segments
+        utt = acc.finalize_utterance()
+        assert utt.full_text == "Search files"
+
+    def test_accumulator_consecutive_pauses_and_resumes(self):
+        """Verify pause/resume idempotency."""
+        acc = SegmentAccumulator(session_id="sess-idempotent")
+        acc.add_segment(TranscriptSegment(id="s1", text="Voice", start_time=0.0, end_time=1.0))
+        assert acc.state == AccumulatorState.ACCUMULATING
+
+        acc.pause()
+        assert acc.state == AccumulatorState.PAUSED
+        acc.pause()  # Redundant pause
+        assert acc.state == AccumulatorState.PAUSED
+
+        acc.resume()
+        assert acc.state == AccumulatorState.ACCUMULATING
+        acc.resume()  # Redundant resume
+        assert acc.state == AccumulatorState.ACCUMULATING
+
+    def test_accumulator_pause_from_idle(self):
+        """Calling pause or resume while IDLE remains in IDLE."""
+        acc = SegmentAccumulator(session_id="sess-idle-pause")
+        assert acc.state == AccumulatorState.IDLE
+        acc.pause()
+        assert acc.state == AccumulatorState.IDLE
+        acc.resume()
+        assert acc.state == AccumulatorState.IDLE
+
+    def test_accumulator_empty_text_segments_filtered_in_final(self):
+        """Whitespace-only segments do not inject spurious spaces into full_text."""
+        acc = SegmentAccumulator(session_id="sess-whitespace")
+        acc.add_segment(TranscriptSegment(id="s1", text="Valid text", start_time=0.0, end_time=1.0, is_final=True))
+        acc.add_segment(TranscriptSegment(id="s2", text="   ", start_time=1.0, end_time=1.5, is_final=True))
+        acc.add_segment(TranscriptSegment(id="s3", text="continued", start_time=1.5, end_time=2.5, is_final=True))
+
+        utterance = acc.finalize_utterance()
+        assert utterance.full_text == "Valid text continued"
+
+    def test_accumulator_segments_isolation_deep_copy(self):
+        """Mutating current_segments does not corrupt internal accumulator buffer."""
+        acc = SegmentAccumulator(session_id="sess-isolation")
+        acc.add_segment(TranscriptSegment(id="s1", text="Original", start_time=0.0, end_time=1.0))
+
+        external_list = acc.current_segments
+        external_list.clear()
+
+        # Internal buffer remains untouched
+        assert acc.count == 1
+        assert len(acc.current_segments) == 1
 
 
 # =============================================================================
