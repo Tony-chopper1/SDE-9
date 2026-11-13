@@ -19,12 +19,12 @@ import json
 import math
 import struct
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, ClassVar, Dict, List, Optional, Set
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from packages.audio.exceptions import AudioConfigError, AudioFrameValidationError
+from packages.audio.exceptions import AudioConfigError, AudioError, AudioFrameValidationError
 
 SUPPORTED_SAMPLE_RATES: Set[int] = {8000, 16000, 22050, 24000, 32000, 44100, 48000}
 SUPPORTED_BIT_DEPTHS: Set[int] = {16}
@@ -41,19 +41,23 @@ class VADState(str, Enum):
     SPEECH_END = "SPEECH_END"
 
 
-class AudioConfig(BaseModel):
-    """Configuration schema for audio capture and streaming.
+class AudioFormat(BaseModel):
+    """Schema defining audio format specifications.
 
-    Default is 16 kHz, 16-bit linear PCM (s16le), mono, 30ms frames (team default).
-    Also supports 20ms frames matching provisional Speech-to-Text expectations.
+    Base class for audio configuration models, encapsulating
+    sample rate, bit depth, channel count, and sample format.
     """
     model_config = ConfigDict(frozen=True, extra="ignore")
+
+    # Format constants for convenience
+    S16LE: ClassVar[str] = "s16le"
+    PCM_16: ClassVar[str] = "s16le"
+    PCM: ClassVar[str] = "pcm"
 
     sample_rate: int = Field(default=16000, description="Sampling rate in Hz (default: 16000)")
     bit_depth: int = Field(default=16, description="Bit depth per sample (default: 16)")
     channels: int = Field(default=1, description="Number of channels: 1=mono, 2=stereo (default: 1)")
     format: str = Field(default="s16le", description="Sample format string (default: 's16le')")
-    frame_duration_ms: int = Field(default=30, description="Discrete frame duration in ms (20 or 30)")
 
     @field_validator("sample_rate")
     @classmethod
@@ -95,6 +99,21 @@ class AudioConfig(BaseModel):
             )
         return v
 
+    @property
+    def bytes_per_sample(self) -> int:
+        """Number of bytes per single channel sample."""
+        return self.bit_depth // 8
+
+
+class AudioConfig(AudioFormat):
+    """Configuration schema for audio capture and streaming.
+
+    Extends AudioFormat with discrete frame duration settings.
+    Default is 16 kHz, 16-bit linear PCM (s16le), mono, 30ms frames (team default).
+    Also supports 20ms frames matching provisional Speech-to-Text expectations.
+    """
+    frame_duration_ms: int = Field(default=30, description="Discrete frame duration in ms (20 or 30)")
+
     @field_validator("frame_duration_ms")
     @classmethod
     def validate_frame_duration(cls, v: int) -> int:
@@ -104,11 +123,6 @@ class AudioConfig(BaseModel):
                 details={"frame_duration_ms": v},
             )
         return v
-
-    @property
-    def bytes_per_sample(self) -> int:
-        """Number of bytes per single channel sample."""
-        return self.bit_depth // 8
 
     @property
     def samples_per_frame(self) -> int:
@@ -183,6 +197,24 @@ class AudioFrame(BaseModel):
                 raise AudioFrameValidationError("audio_data/data must be provided as raw bytes")
             data["data"] = bytes(raw_bytes)
             data["audio_data"] = bytes(raw_bytes)
+
+            # Map chunk_id / chunk_index if provided
+            if "chunk_id" in data and "frame_id" not in data:
+                data["frame_id"] = data["chunk_id"]
+            if "chunk_index" in data and "frame_index" not in data:
+                data["frame_index"] = data["chunk_index"]
+
+            # If a config object was supplied, inherit its parameters
+            cfg = data.get("config")
+            if cfg is not None:
+                if hasattr(cfg, "sample_rate") and "sample_rate" not in data:
+                    data["sample_rate"] = cfg.sample_rate
+                if hasattr(cfg, "channels") and "channels" not in data:
+                    data["channels"] = cfg.channels
+                if hasattr(cfg, "format") and "format" not in data:
+                    data["format"] = cfg.format
+                if hasattr(cfg, "frame_duration_ms") and "frame_duration_ms" not in data:
+                    data["frame_duration_ms"] = cfg.frame_duration_ms
 
             # Sync frame_index / sequence_number if one is provided
             if "sequence_number" in data and "frame_index" not in data:
@@ -302,6 +334,24 @@ class AudioFrame(BaseModel):
         if include_raw_bytes:
             res["audio_data_base64"] = base64.b64encode(self.data).decode("ascii")
         return res
+
+    @property
+    def chunk_id(self) -> str:
+        """Convenience alias for frame_id."""
+        return self.frame_id
+
+    @property
+    def chunk_index(self) -> int:
+        """Convenience alias for frame_index."""
+        return self.frame_index
+
+class AudioChunk(AudioFrame):
+    """Schema representing a discrete chunk of captured audio.
+
+    Serves as the canonical/alias schema for discrete audio payloads,
+    maintaining 100% backward compatibility and interoperability with AudioFrame.
+    """
+    pass
 
 
 class VADResult(BaseModel):

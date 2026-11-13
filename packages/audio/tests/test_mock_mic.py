@@ -114,11 +114,11 @@ def test_mock_mic_20ms_and_30ms_frame_sizes():
 
 
 def test_mock_mic_determinism():
-    """Verify that identical configurations and patterns produce identical audio bytes."""
+    """Verify that identical configurations and patterns produce identical audio bytes and metadata."""
     config = AudioConfig(sample_rate=16000, frame_duration_ms=20)
 
-    mic1 = MockMicrophoneSource(config=config, pattern="speech", max_frames=10)
-    mic2 = MockMicrophoneSource(config=config, pattern="speech", max_frames=10)
+    mic1 = MockMicrophoneSource(config=config, pattern="speech", max_frames=10, seed=42)
+    mic2 = MockMicrophoneSource(config=config, pattern="speech", max_frames=10, seed=42)
 
     with mic1, mic2:
         frames1 = list(mic1.stream())
@@ -128,10 +128,62 @@ def test_mock_mic_determinism():
     assert len(frames2) == 10
 
     for f1, f2 in zip(frames1, frames2):
+        assert f1.model_dump() == f2.model_dump()
+        assert f1.frame_id == f2.frame_id
+        assert f1.timestamp == f2.timestamp
+        assert f1.timestamp_utc == f2.timestamp_utc
         assert f1.sequence_number == f2.sequence_number
         assert f1.timestamp_ms == f2.timestamp_ms
         assert f1.data == f2.data
         assert f1.calculate_rms() == f2.calculate_rms()
+
+
+def test_mock_mic_strict_two_runs_identical_outputs():
+    """CEO Requirement 3: Automated test proving two runs with identical inputs produce identical outputs."""
+    # First run
+    mic_run_1 = MockMicrophoneSource(
+        pattern="alternating",
+        max_frames=8,
+        seed=12345,
+        start_timestamp=1793491200.0,
+    )
+    with mic_run_1:
+        frames_run_1 = [frame.model_dump() for frame in mic_run_1.stream()]
+
+    # Second run with identical configuration and seed
+    mic_run_2 = MockMicrophoneSource(
+        pattern="alternating",
+        max_frames=8,
+        seed=12345,
+        start_timestamp=1793491200.0,
+    )
+    with mic_run_2:
+        frames_run_2 = [frame.model_dump() for frame in mic_run_2.stream()]
+
+    assert len(frames_run_1) == 8
+    assert len(frames_run_2) == 8
+    # Exact full serialized equality across all 8 frames (IDs, timestamps, metadata, and PCM data)
+    assert frames_run_1 == frames_run_2
+    for f1, f2 in zip(frames_run_1, frames_run_2):
+        assert f1["frame_id"] == f2["frame_id"]
+        assert f1["timestamp"] == f2["timestamp"]
+        assert f1["timestamp_utc"] == f2["timestamp_utc"]
+        assert f1["sequence_number"] == f2["sequence_number"]
+        assert f1["data"] == f2["data"]
+
+    # Verify seed variation produces distinct frame IDs while preserving deterministic PCM and timestamps
+    mic_run_3 = MockMicrophoneSource(
+        pattern="alternating",
+        max_frames=8,
+        seed=99999,
+        start_timestamp=1793491200.0,
+    )
+    with mic_run_3:
+        frames_run_3 = [frame.model_dump() for frame in mic_run_3.stream()]
+    assert frames_run_3[0]["frame_id"] != frames_run_1[0]["frame_id"]
+    assert frames_run_3[0]["timestamp"] == frames_run_1[0]["timestamp"]
+    # PCM waveform is synthesized mathematically and remains deterministic
+    assert frames_run_3[0]["data"] == frames_run_1[0]["data"]
 
 
 def test_mock_mic_patterns():

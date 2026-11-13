@@ -19,8 +19,13 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
 
+  // Ensure segments are always ordered chronologically by ascending start_time
+  const sortedSegments = useMemo(() => {
+    return [...segments].sort((a, b) => a.start_time - b.start_time);
+  }, [segments]);
+
   // Virtualization window calculations
-  const totalCount = segments.length;
+  const totalCount = sortedSegments.length;
   const isVirtualized = totalCount > 25;
 
   const { startIndex, endIndex, offsetY, totalHeight } = useMemo(() => {
@@ -47,8 +52,8 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
   }, [totalCount, isVirtualized, scrollTop, itemHeight, viewportHeight]);
 
   const visibleSegments = useMemo(() => {
-    return segments.slice(startIndex, endIndex);
-  }, [segments, startIndex, endIndex]);
+    return sortedSegments.slice(startIndex, endIndex);
+  }, [sortedSegments, startIndex, endIndex]);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
@@ -88,6 +93,7 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
       ref={containerRef}
       className="transcript-timeline"
       aria-label="Speech Transcript Timeline"
+      aria-live="polite"
       tabIndex={0}
       onScroll={handleScroll}
       style={{
@@ -105,7 +111,7 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
 
       {/* Screen reader live announcements */}
       <div aria-live="polite" aria-atomic="false" className="sr-only">
-        {totalCount > 0 ? `Latest transcript: ${segments[totalCount - 1].text}` : ''}
+        {totalCount > 0 ? `Latest transcript: ${sortedSegments[totalCount - 1].text}` : ''}
       </div>
 
       <div
@@ -136,6 +142,17 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
             const endSec = Math.ceil(seg.end_time);
             const confidencePercent = Math.round(seg.confidence * 100);
 
+            // Determine visual confidence badge level
+            let confClass = 'badge-conf-high';
+            let confLabel = 'High confidence';
+            if (seg.confidence < 0.65) {
+              confClass = 'badge-conf-low';
+              confLabel = 'Low confidence';
+            } else if (seg.confidence < 0.85) {
+              confClass = 'badge-conf-med';
+              confLabel = 'Medium confidence';
+            }
+
             return (
               <li
                 key={seg.id || `seg-${actualIndex}`}
@@ -158,12 +175,24 @@ export const TranscriptTimeline: React.FC<TranscriptTimelineProps> = ({
                   >
                     {startSec}s - {endSec}s
                   </span>
+
                   {seg.confidence > 0 && (
                     <span
-                      className="confidence-badge"
-                      title={`${confidencePercent}% recognition confidence`}
+                      className={`confidence-badge ${confClass}`}
+                      title={`${confidencePercent}% recognition confidence (${confLabel})`}
+                      aria-label={`${confidencePercent}% confidence (${confLabel})`}
                     >
                       {confidencePercent}%
+                    </span>
+                  )}
+
+                  {seg.revision !== undefined && seg.revision > 0 && (
+                    <span
+                      className="revision-badge"
+                      title={`Utterance revision ${seg.revision}`}
+                      aria-label={`Revision ${seg.revision}`}
+                    >
+                      Rev {seg.revision}
                     </span>
                   )}
                 </div>

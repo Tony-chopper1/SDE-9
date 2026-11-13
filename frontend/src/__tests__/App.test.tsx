@@ -291,4 +291,168 @@ describe('App Component', () => {
       expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
     });
   });
+
+  it('handles Pause, Resume, and Stop transitions in the UI', async () => {
+    render(<App />);
+
+    // Start Recording
+    const startBtn = screen.getByRole('button', { name: 'Start Voice Capture' });
+    fireEvent.click(startBtn);
+
+    const pauseBtn = await screen.findByRole('button', { name: 'Pause Recording' });
+    expect(pauseBtn).toBeTruthy();
+    expect(screen.getByText('RECORDING')).toBeTruthy();
+
+    // Pause
+    fireEvent.click(pauseBtn);
+    const resumeBtn = await screen.findByRole('button', { name: 'Resume Recording' });
+    expect(resumeBtn).toBeTruthy();
+    expect(screen.getByText('PAUSED')).toBeTruthy();
+
+    // Resume
+    fireEvent.click(resumeBtn);
+    const pauseBtnAgain = await screen.findByRole('button', { name: 'Pause Recording' });
+    expect(pauseBtnAgain).toBeTruthy();
+    expect(screen.getByText('RECORDING')).toBeTruthy();
+
+    // Stop
+    const stopBtn = screen.getByRole('button', { name: 'Stop Recording' });
+    fireEvent.click(stopBtn);
+
+    const startBtnAgain = await screen.findByRole('button', { name: 'Start Voice Capture' });
+    expect(startBtnAgain).toBeTruthy();
+    expect(screen.getByText('STANDBY')).toBeTruthy();
+  });
+
+  it('supports keyboard shortcuts (Alt+R, Alt+P, Alt+C) and ignores them in text inputs', async () => {
+    render(<App />);
+
+    // Initial state: STANDBY, Screen Context OFF
+    expect(screen.getByText('STANDBY')).toBeTruthy();
+    const contextSwitch = screen.getByRole('switch');
+    expect(contextSwitch.getAttribute('aria-checked')).toBe('false');
+
+    // Alt+C toggles Screen Context ON
+    fireEvent.keyDown(window, { key: 'c', altKey: true });
+    expect(contextSwitch.getAttribute('aria-checked')).toBe('true');
+
+    // Alt+C toggles Screen Context OFF
+    fireEvent.keyDown(window, { key: 'c', altKey: true });
+    expect(contextSwitch.getAttribute('aria-checked')).toBe('false');
+
+    // Alt+R starts recording
+    fireEvent.keyDown(window, { key: 'r', altKey: true });
+    await screen.findByRole('button', { name: 'Pause Recording' });
+    expect(screen.getByText('RECORDING')).toBeTruthy();
+
+    // Alt+P pauses recording
+    fireEvent.keyDown(window, { key: 'p', altKey: true });
+    await screen.findByRole('button', { name: 'Resume Recording' });
+    expect(screen.getByText('PAUSED')).toBeTruthy();
+
+    // Alt+P resumes recording
+    fireEvent.keyDown(window, { key: 'p', altKey: true });
+    await screen.findByRole('button', { name: 'Pause Recording' });
+    expect(screen.getByText('RECORDING')).toBeTruthy();
+
+    // Verify shortcuts are ignored inside an input element
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.focus();
+
+    fireEvent.keyDown(input, { key: 'p', altKey: true });
+    // Still recording because shortcut was ignored!
+    expect(screen.getByText('RECORDING')).toBeTruthy();
+
+    document.body.removeChild(input);
+
+    // Alt+R stops recording
+    fireEvent.keyDown(window, { key: 'r', altKey: true });
+    await screen.findByRole('button', { name: 'Start Voice Capture' });
+    expect(screen.getByText('STANDBY')).toBeTruthy();
+  });
+
+  it('renders the Context Source Panel with default OFF state and allows toggling to ON', async () => {
+    render(<App />);
+
+    // Default OFF
+    expect(
+      screen.getByText('Screen context is disabled. Only spoken audio input is captured.')
+    ).toBeTruthy();
+
+    const switchBtn = screen.getByRole('switch');
+    fireEvent.click(switchBtn);
+
+    // Now ON
+    expect(screen.getByText('MOCK DEMO')).toBeTruthy();
+    expect(screen.getByText('Visual Studio Code')).toBeTruthy();
+    expect(screen.getByText('app.py — SDK-9 Voicebot (Mock Context)')).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
+  });
+
+  it('displays the mock mode banner when backend reports mock_mode: true', async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      const banner = screen.getByRole('status', { name: 'Mock Mode Active' });
+      expect(banner).toBeTruthy();
+      expect(screen.getByText('MOCK MODE')).toBeTruthy();
+      expect(
+        screen.getByText(/Backend services are operating in simulated test mode/i)
+      ).toBeTruthy();
+    });
+  });
+
+  it('does not display the mock mode banner when backend reports mock_mode: false', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: {
+          status: 'healthy',
+          service: 'sdk-9-voicebot',
+          mock_mode: false,
+        },
+        timestamp: Date.now(),
+      }),
+    } as Response);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('status', { name: 'Mock Mode Active' })).toBeNull();
+    expect(screen.queryByText('MOCK MODE')).toBeNull();
+  });
+
+  it('does not display the mock mode banner when backend health check fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('status', { name: 'Mock Mode Active' })).toBeNull();
+      expect(screen.queryByText('MOCK MODE')).toBeNull();
+    });
+  });
+
+  it('displays the microphone permission badge in voice controls', async () => {
+    render(<App />);
+
+    const badge = screen.getByRole('status', {
+      name: /Microphone permission:/i,
+    });
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toContain('MIC:');
+
+    await waitFor(() => {
+      expect(screen.getByText('sdk-9-voicebot')).toBeTruthy();
+    });
+  });
 });

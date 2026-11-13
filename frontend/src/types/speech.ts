@@ -3,6 +3,8 @@
  * Eliminates 'any' types across voice capture modules.
  */
 
+export type MicPermissionState = 'prompt' | 'granted' | 'denied' | 'unsupported';
+
 export interface SpeechRecognitionAlternativeItem {
   readonly transcript: string;
   readonly confidence: number;
@@ -50,4 +52,17 @@ export interface RecordingSession {
   date: string;
   transcript: string;
   durationSeconds?: number;
+}
+
+export type RecordingState = 'idle' | 'recording' | 'paused';
+
+export interface LiveTranscriptSegment {
+  id: string;
+  text: string;
+  confidence: number;
+  start_time: number;
+  end_time: number;
+  is_final: boolean;
+  revision: number;
+  speaker_id?: string;
 }
