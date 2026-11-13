@@ -1,8 +1,11 @@
 """
+Segment Accumulator State Machine
+
 Aggregates streaming partial and final transcript chunks, handles overlapping timestamps,
 orders segments chronologically, and prevents memory leaks through state-managed resets.
 """
-import time
+from __future__ import annotations
+
 from typing import List, Optional
 from packages.speech_to_text.models import (
     AccumulatorState,
@@ -21,33 +24,60 @@ class SegmentAccumulator:
     """
 
     def __init__(self, session_id: str):
-        self.session_id = session_id
+        if not session_id or not str(session_id).strip():
+            raise ValueError("session_id must be a non-empty string.")
+
+        self.session_id = session_id.strip()
         self._segments: List[TranscriptSegment] = []
         self._state: AccumulatorState = AccumulatorState.IDLE
+        self._utterance_counter: int = 0
         self._utterance_id = self._generate_utterance_id()
 
     @property
     def state(self) -> AccumulatorState:
+        """Current state in the accumulator state machine."""
         return self._state
 
     @property
     def current_segments(self) -> List[TranscriptSegment]:
+        """A copy of all segments currently buffered."""
         return list(self._segments)
 
     @property
     def count(self) -> int:
+        """Count of segments in the active buffer."""
         return len(self._segments)
+
+    @property
+    def interim_text(self) -> str:
+        """
+        Returns the latest preview text for in-flight streaming speech.
+        If the latest segment is interim, returns its text; otherwise returns
+        the joined text of all buffered segments.
+        """
+        if not self._segments:
+            return ""
+        # If the latest segment in chronological sequence is interim, return it
+        latest = self._segments[-1]
+        if not latest.is_final:
+            return latest.text
+        return " ".join(s.text.strip() for s in self._segments if s.text.strip())
 
     def add_segment(self, segment: TranscriptSegment) -> None:
         """
         Adds a new streaming transcript segment or updates an existing one.
+
         Handles:
+          - Input type validation.
           - Out-of-order segment arrivals (re-sorts chronologically).
-          - Updating interim segments when a final segment with the same ID arrives.
+          - Updating interim segments when a new segment with the same ID arrives.
           - Overlapping timestamp resolution.
         """
+        if not isinstance(segment, TranscriptSegment):
+            raise TypeError(f"Expected TranscriptSegment instance, got {type(segment).__name__}")
+
         if self._state == AccumulatorState.FINALIZED:
-            # Automatic transition back to ACCUMULATING if new speech arrives
+            # Automatic transition back to ACCUMULATING if new speech arrives after finalization
             self._reset_internal_buffer()
 
         self._state = AccumulatorState.ACCUMULATING
@@ -64,8 +94,8 @@ class SegmentAccumulator:
         else:
             self._segments.append(segment)
 
-        # Re-sort chronologically by start_time
-        self._segments.sort(key=lambda s: s.start_time)
+        # Re-sort chronologically by start_time, then end_time
+        self._segments.sort(key=lambda s: (s.start_time, s.end_time))
 
     def pause(self) -> None:
         """Pauses accumulation without clearing the buffer (e.g. during VAD silence)."""
@@ -85,8 +115,8 @@ class SegmentAccumulator:
         self._state = AccumulatorState.FINALIZED
 
         if not self._segments:
-            empty_time = time.time()
-            return AccumulatedUtterance(
+            empty_time = 0.0
+            utterance = AccumulatedUtterance(
                 id=self._utterance_id,
                 session_id=self.session_id,
                 full_text="",
@@ -96,14 +126,16 @@ class SegmentAccumulator:
                 duration=0.0,
                 is_complete=True,
             )
+            self._reset_internal_buffer()
+            return utterance
 
-        # Merge text: deduplicate consecutive overlapping words if any
+        # Merge text: prioritize final committed segments if available
         final_segments = [s for s in self._segments if s.is_final]
         segments_to_use = final_segments if final_segments else self._segments
 
         full_text = " ".join(s.text.strip() for s in segments_to_use if s.text.strip())
-        start_time = self._segments[0].start_time
-        end_time = self._segments[-1].end_time
+        start_time = min(s.start_time for s in self._segments)
+        end_time = max(s.end_time for s in self._segments)
         duration = max(0.0, round(end_time - start_time, 3))
 
         utterance = AccumulatedUtterance(
@@ -129,7 +161,8 @@ class SegmentAccumulator:
     def _reset_internal_buffer(self) -> None:
         self._segments.clear()
         self._state = AccumulatorState.IDLE
+        self._utterance_counter += 1
         self._utterance_id = self._generate_utterance_id()
 
     def _generate_utterance_id(self) -> str:
-        return f"utt-{int(time.time() * 1000)}"
+        return f"utt-{self.session_id}-{self._utterance_counter}"
