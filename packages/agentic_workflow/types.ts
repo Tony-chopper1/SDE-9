@@ -25,13 +25,6 @@ export type SafetyLevel = "A" | "B" | "C" | "D";
 
 /**
  * Finite states of the agentic decision loop.
- *
- * Valid transitions:
- * ```
- * IDLE → LISTENING → PLANNING → AWAITING_APPROVAL → EXECUTING → VERIFYING → RESPONDING → IDLE
- * Any state → ERROR
- * ERROR → IDLE
- * ```
  */
 export type AgentState =
   | "IDLE"
@@ -56,7 +49,19 @@ export type StepStatus =
 // ---------------------------------------------------------------------------
 
 /**
- * A single discrete action within an {@link ActionPlan}.
+ * Specification defining parameters, safety level, and metadata for a tool.
+ */
+export interface ToolSpec {
+  name: string;
+  description: string;
+  safety_level: SafetyLevel;
+  is_idempotent: boolean;
+  parameters: Record<string, unknown>;
+  required_parameters: string[];
+}
+
+/**
+ * A single discrete action within a {@link WorkflowPlan}.
  */
 export interface WorkflowStep {
   /** Unique identifier for this step (UUID string). */
@@ -85,12 +90,18 @@ export interface WorkflowStep {
   completed_at?: number;
   /** Ordered list of log entries emitted during execution. */
   execution_logs: string[];
+  /** Optional prerequisite step IDs. */
+  depends_on?: string[];
+  /** Maximum execution duration before timing out. */
+  timeout_seconds?: number;
+  /** Whether the tool action is idempotent. */
+  is_idempotent?: boolean;
 }
 
 /**
  * An ordered collection of {@link WorkflowStep} objects representing a multi-step goal.
  */
-export interface ActionPlan {
+export interface WorkflowPlan {
   /** Unique plan identifier (UUID string). */
   plan_id: string;
   /** Identifier of the user session that triggered this plan. */
@@ -117,10 +128,29 @@ export interface ActionPlan {
   execution_logs: string[];
 }
 
+/** Backward compatibility alias */
+export type ActionPlan = WorkflowPlan;
+
+/**
+ * Formal request for human approval before executing sensitive workflow steps.
+ */
+export interface ApprovalRequest {
+  request_id: string;
+  plan_id: string;
+  session_id: string;
+  safety_level: SafetyLevel;
+  status: string;
+  expires_at?: number;
+  decided_at?: number;
+  decided_by?: string;
+  reason?: string;
+  created_at: number;
+}
+
 /**
  * Result returned by the tool executor after a single tool invocation.
  */
-export interface ToolResult {
+export interface WorkflowResult {
   /** Dot-namespaced tool identifier that was executed. */
   tool_name: string;
   /** `true` if the tool completed without error. */
@@ -134,6 +164,9 @@ export interface ToolResult {
   /** Unix timestamp (seconds) of result creation. */
   timestamp: number;
 }
+
+/** Backward compatibility alias */
+export type ToolResult = WorkflowResult;
 
 // ---------------------------------------------------------------------------
 // State Machine Supporting Types

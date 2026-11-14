@@ -1,12 +1,12 @@
 """
 Mock Tool Executor for the Agentic Workflow module.
 
-Simulates the execution of registered tools (file search, file move, and
+Simulates the execution of registered harmless tools (file search and
 calculator evaluation) for integration testing and local development without
-requiring real filesystem access or external services.
+requiring real filesystem access, file modifications, or external services.
 
 All tools are dispatched through a single :meth:`MockToolExecutor.execute`
-entry-point and return a structured :class:`~packages.agentic_workflow.models.ToolResult`.
+entry-point and return a structured :class:`~packages.agentic_workflow.models.WorkflowResult`.
 """
 
 from __future__ import annotations
@@ -14,15 +14,41 @@ from __future__ import annotations
 import ast
 import operator
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from packages.agentic_workflow.models import ToolResult
+from packages.agentic_workflow.models import (
+    SafetyLevel,
+    ToolSpec,
+    WorkflowResult,
+)
+
+# ---------------------------------------------------------------------------
+# Allow-listed Harmless Tool Specifications
+# ---------------------------------------------------------------------------
+
+DEFAULT_TOOL_SPECS: List[ToolSpec] = [
+    ToolSpec(
+        name="file.search",
+        description="Simulates searching for file paths matching a glob pattern.",
+        safety_level=SafetyLevel.A,
+        is_idempotent=True,
+        parameters={"pattern": "str", "directory": "str", "max_results": "int"},
+        required_parameters=[],
+    ),
+    ToolSpec(
+        name="calc.evaluate",
+        description="Safely evaluates basic arithmetic expressions.",
+        safety_level=SafetyLevel.A,
+        is_idempotent=True,
+        parameters={"expression": "str"},
+        required_parameters=["expression"],
+    ),
+]
 
 # ---------------------------------------------------------------------------
 # Safe math expression evaluator
 # ---------------------------------------------------------------------------
 
-# Mapping of AST node types to safe arithmetic operators
 _SAFE_OPERATORS: Dict[type, Any] = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
@@ -77,21 +103,18 @@ def _safe_eval(node: ast.expr) -> float:
 
 
 class MockToolExecutor:
-    """Simulates tool executions for agentic workflow integration testing.
+    """Simulates harmless tool executions for agentic workflow testing.
 
-    Registered tools:
+    Registered harmless tools:
+    * ``file.search`` / ``file_search`` – Simulates a directory scan and returns mock matching paths.
+    * ``calc.evaluate`` / ``calc_evaluate`` – Safely evaluates arithmetic expressions and returns the result.
 
-    * ``file.search`` – Simulates a directory scan and returns mock matching paths.
-    * ``file.move`` – Validates source/destination and returns a simulated move confirmation.
-    * ``calc.evaluate`` – Safely evaluates arithmetic expressions and returns the result.
-
-    Unknown tool names are handled gracefully with a descriptive :class:`ToolResult`
-    containing ``success=False``.
+    Note: Consequential tools like ``file.move`` have been removed to prevent
+    unintended file modifications or external side-effects.
 
     Args:
-        simulate_failure: When ``True``, every :meth:`execute` call raises a
-            simulated runtime error, allowing callers to test failure-recovery
-            paths without targeting specific tools.
+        simulate_failure: When ``True``, every :meth:`execute` call returns a
+            simulated failure, allowing callers to test failure-recovery paths.
 
     Example::
 
@@ -104,15 +127,20 @@ class MockToolExecutor:
 
     def __init__(self, simulate_failure: bool = False) -> None:
         self.simulate_failure = simulate_failure
+        self.specs: Dict[str, ToolSpec] = {spec.name: spec for spec in DEFAULT_TOOL_SPECS}
 
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
-    def execute(self, tool_name: str, parameters: Dict[str, Any]) -> ToolResult:
-        """Execute a named tool with the provided parameters.
+    def get_registered_tools(self) -> List[str]:
+        """Return list of registered harmless tool names."""
+        return ["file.search", "calc.evaluate"]
 
-        Dispatches to the appropriate private handler based on *tool_name*.
+    def execute(self, tool_name: str, parameters: Dict[str, Any]) -> WorkflowResult:
+        """Execute a named harmless tool with the provided parameters.
+
+        Dispatches to the appropriate handler based on *tool_name*.
         Measures and records wall-clock execution time in milliseconds.
 
         Args:
@@ -120,14 +148,14 @@ class MockToolExecutor:
             parameters: Keyword arguments consumed by the target tool.
 
         Returns:
-            A :class:`~packages.agentic_workflow.models.ToolResult` with
+            A :class:`~packages.agentic_workflow.models.WorkflowResult` with
             ``success``, ``output``, ``duration_ms``, and optionally ``error``.
         """
         start = time.perf_counter()
 
         if self.simulate_failure:
             duration_ms = (time.perf_counter() - start) * 1000
-            return ToolResult(
+            return WorkflowResult(
                 tool_name=tool_name,
                 success=False,
                 output=None,
@@ -138,7 +166,7 @@ class MockToolExecutor:
         try:
             output = self._dispatch(tool_name, parameters)
             duration_ms = (time.perf_counter() - start) * 1000
-            return ToolResult(
+            return WorkflowResult(
                 tool_name=tool_name,
                 success=True,
                 output=output,
@@ -146,7 +174,7 @@ class MockToolExecutor:
             )
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000
-            return ToolResult(
+            return WorkflowResult(
                 tool_name=tool_name,
                 success=False,
                 output=None,
@@ -162,33 +190,36 @@ class MockToolExecutor:
         """Route *tool_name* to the appropriate handler.
 
         Args:
-            tool_name: Dot-namespaced tool identifier.
+            tool_name: Dot-namespaced or identifier tool name.
             parameters: Tool-specific keyword arguments.
 
         Returns:
             The raw output produced by the handler.
 
         Raises:
-            ValueError: If *tool_name* is not a registered tool.
+            ValueError: If *tool_name* is not an authorized harmless tool.
         """
         handlers = {
             "file.search": self._file_search,
-            "file.move": self._file_move,
+            "file_search": self._file_search,
             "calc.evaluate": self._calc_evaluate,
+            "calc_evaluate": self._calc_evaluate,
         }
         if tool_name not in handlers:
             raise ValueError(
                 f"Unknown tool '{tool_name}'. "
-                f"Registered tools: {list(handlers.keys())}"
+                f"Registered tools: ['file.search', 'calc.evaluate']"
             )
         return handlers[tool_name](parameters)
 
     # ------------------------------------------------------------------
-    # Tool handlers
+    # Harmless Tool Handlers
     # ------------------------------------------------------------------
 
     def _file_search(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """Simulate a directory scan and return mock matching file paths.
+
+        Harmless mock tool: does not perform any real filesystem operations.
 
         Recognised parameters:
             pattern (str): Glob-style file pattern (e.g. ``"*.py"``).
@@ -210,7 +241,7 @@ class MockToolExecutor:
         ext = pattern.lstrip("*").lstrip(".")
         ext = ext if ext else "file"
 
-        # Generate deterministic mock paths
+        # Generate deterministic mock paths (no real disk access)
         mock_files = [
             f"{directory.rstrip('/')}/mock_{i + 1}.{ext}" for i in range(min(max_results, 5))
         ]
@@ -222,42 +253,10 @@ class MockToolExecutor:
             "total_found": len(mock_files),
         }
 
-    def _file_move(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """Simulate moving a file from source to destination.
-
-        Recognised parameters:
-            source (str): Absolute source file path. **Required.**
-            destination (str): Absolute destination file path. **Required.**
-            overwrite (bool): Whether to overwrite an existing destination (default: ``False``).
-
-        Returns:
-            A dict with keys:
-                * ``source`` – original file path.
-                * ``destination`` – new file path.
-                * ``overwrite`` – whether overwrite was requested.
-                * ``status`` – always ``"moved"`` on success.
-
-        Raises:
-            ValueError: If ``source`` or ``destination`` is missing or empty.
-        """
-        source: str = parameters.get("source", "")
-        destination: str = parameters.get("destination", "")
-        overwrite: bool = bool(parameters.get("overwrite", False))
-
-        if not source:
-            raise ValueError("file.move requires a non-empty 'source' parameter.")
-        if not destination:
-            raise ValueError("file.move requires a non-empty 'destination' parameter.")
-
-        return {
-            "source": source,
-            "destination": destination,
-            "overwrite": overwrite,
-            "status": "moved",
-        }
-
     def _calc_evaluate(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """Safely evaluate an arithmetic expression and return the result.
+
+        Harmless mock tool: purely in-memory evaluation with no side-effects.
 
         Recognised parameters:
             expression (str): A mathematical expression string (e.g. ``"2 + 3 * 4"``).

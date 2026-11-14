@@ -16,6 +16,7 @@ from packages.agentic_workflow.models import (
     ActionPlan,
     AgentState,
     SafetyLevel,
+    WorkflowPlan,
     WorkflowStep,
     highest_safety_level,
 )
@@ -99,7 +100,7 @@ class AgentStateMachine:
 
     Attributes:
         state: Current :class:`AgentState` of the machine.
-        current_plan: The active :class:`ActionPlan`, if one has been built.
+        current_plan: The active :class:`WorkflowPlan`, if one has been built.
         error_context: Metadata captured on the most recent ERROR transition.
         transition_history: Ordered list of :class:`StateTransitionRecord` objects.
 
@@ -122,7 +123,7 @@ class AgentStateMachine:
 
     def __init__(self) -> None:
         self.state: AgentState = AgentState.IDLE
-        self.current_plan: Optional[ActionPlan] = None
+        self.current_plan: Optional[WorkflowPlan] = None
         self.error_context: Optional[Dict] = None
         self.transition_history: List[StateTransitionRecord] = []
 
@@ -173,8 +174,8 @@ class AgentStateMachine:
 
     def build_plan(
         self, session_id: str, goal: str, steps: List[WorkflowStep]
-    ) -> ActionPlan:
-        """Construct an :class:`ActionPlan` and apply the safety gate.
+    ) -> WorkflowPlan:
+        """Construct a :class:`WorkflowPlan` and apply the safety gate.
 
         If any step carries :attr:`SafetyLevel.C` (Sensitive) or
         :attr:`SafetyLevel.D` (Destructive), ``requires_approval`` is set to
@@ -189,7 +190,7 @@ class AgentStateMachine:
             steps: Ordered list of :class:`WorkflowStep` objects.
 
         Returns:
-            The constructed :class:`ActionPlan`.
+            The constructed :class:`WorkflowPlan`.
 
         Raises:
             InvalidTransitionError: If the machine is not currently in the
@@ -204,7 +205,7 @@ class AgentStateMachine:
         overall = highest_safety_level(safety_levels)
         needs_approval = overall in (SafetyLevel.C, SafetyLevel.D)
 
-        plan = ActionPlan(
+        plan = WorkflowPlan(
             plan_id=str(uuid.uuid4()),
             session_id=session_id,
             goal=goal,
@@ -231,11 +232,11 @@ class AgentStateMachine:
     # Approval handling
     # ------------------------------------------------------------------
 
-    def approve_plan(self) -> ActionPlan:
+    def approve_plan(self) -> WorkflowPlan:
         """Approve the current pending plan and transition to ``EXECUTING``.
 
         Returns:
-            The approved :class:`ActionPlan` with ``approved_at`` timestamp set.
+            The approved :class:`WorkflowPlan` with ``approved_at`` timestamp set.
 
         Raises:
             InvalidTransitionError: If the machine is not in ``AWAITING_APPROVAL``.
@@ -258,14 +259,14 @@ class AgentStateMachine:
         )
         return self.current_plan
 
-    def reject_plan(self, reason: str) -> ActionPlan:
+    def reject_plan(self, reason: str) -> WorkflowPlan:
         """Reject the current pending plan and return to ``IDLE``.
 
         Args:
             reason: Human-readable explanation for the rejection.
 
         Returns:
-            The rejected :class:`ActionPlan` with ``rejected_at`` and
+            The rejected :class:`WorkflowPlan` with ``rejected_at`` and
             ``rejection_reason`` populated.
 
         Raises:

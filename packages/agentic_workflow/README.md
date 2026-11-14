@@ -1,13 +1,17 @@
 # Agentic Workflow Module (`packages/agentic_workflow/`)
 
 > **Owner**: Chirantan R Kuppelur · Branch: `feature/agentic-workflow`  
-> **Task**: W4 – Agentic Workflow: Workflow Schemas, State Machine & Mock Tool Executor
+> **Task**: W4 – Agentic Workflow: Schemas, State Machine & Harmless Mock Tool Executor (Week 1)
 
 ---
 
 ## Overview
 
-The `agentic_workflow` package provides the core orchestration layer for the SDK-9 AI Voice Co-Pilot. It implements a finite-state machine that governs multi-step agentic decisions, a safety-classification gate that enforces human approval for high-risk actions, and a mock tool executor for integration testing and local development.
+The `agentic_workflow` package provides the core orchestration layer for the SDK-9 AI Voice Co-Pilot. It implements:
+- Standardized domain schemas: `WorkflowPlan`, `WorkflowStep`, `ToolSpec`, `ApprovalRequest`, and `WorkflowResult`.
+- A finite-state machine that governs multi-step agentic decisions and transitions.
+- A safety-classification gate (Levels A to D) enforcing human approval for sensitive/destructive operations.
+- A strictly harmless mock tool execution engine with exactly two harmless tools (`file.search` and `calc.evaluate`). Consequential tools like `file.move` or external network dispatch have been removed to prevent side-effects.
 
 ---
 
@@ -16,51 +20,65 @@ The `agentic_workflow` package provides the core orchestration layer for the SDK
 ```
 packages/agentic_workflow/
 ├── __init__.py          # Public API re-exports
-├── models.py            # Pydantic data models & enums
-├── state_machine.py     # AgentStateMachine FSM
-├── mock_executor.py     # MockToolExecutor (simulated tools)
-├── types.ts             # TypeScript interfaces (frontend contract)
+├── models.py            # WorkflowPlan, WorkflowStep, ToolSpec, ApprovalRequest, WorkflowResult
+├── state_machine.py     # AgentStateMachine FSM with safety gate
+├── mock_executor.py     # MockToolExecutor (harmless mock tools)
+├── types.ts             # TypeScript interfaces mirroring all schemas
 └── tests/
-    └── test_agentic_workflow.py  # Full unit + integration suite (126 tests, 99% coverage)
+    └── test_agentic_workflow.py  # Unit + integration test suite (129 tests, 99% coverage)
 ```
 
 ---
 
-## Safety Levels
+## Standard Schemas
 
-Every `WorkflowStep` is tagged with a `SafetyLevel` that determines whether human approval is required before the plan executes.
+| Schema | Purpose | Key Attributes |
+|---|---|---|
+| **`WorkflowPlan`** | Multi-step agentic execution plan | `plan_id`, `session_id`, `goal`, `steps`, `overall_safety_level`, `requires_approval`, `approved_at`, `rejected_at`, `rejection_reason` |
+| **`WorkflowStep`** | Discrete action step in a plan | `id`, `step_number`, `description`, `tool_name`, `parameters`, `safety_level`, `status`, `retry_count`, `execution_logs` |
+| **`ToolSpec`** | Specification of an authorized tool | `name`, `description`, `safety_level`, `is_idempotent`, `parameters`, `required_parameters` |
+| **`ApprovalRequest`** | Human-in-the-loop approval contract | `request_id`, `plan_id`, `session_id`, `safety_level`, `status`, `expires_at`, `decided_at`, `decided_by`, `reason` |
+| **`WorkflowResult`** | Standard result of tool execution | `tool_name`, `success`, `output`, `duration_ms`, `error`, `timestamp` |
+
+> *Note: For backwards compatibility with initial starter code, aliases `ActionPlan = WorkflowPlan` and `ToolResult = WorkflowResult` are provided.*
+
+---
+
+## Harmless Mock Tools
+
+Per safety requirements, consequential operations (such as file moving/renaming, disk modifications, or external communications) have been removed. Exactly two harmless in-memory mock tools are registered:
+
+1. **`file.search`** (`SafetyLevel.A`, Informational):
+   - Harmless, read-only simulation of glob directory scanning.
+   - Parameters: `pattern` (str, default: `*`), `directory` (str, default: `/`), `max_results` (int, default: 10).
+   - Generates simulated mock path strings without touching the physical filesystem.
+
+2. **`calc.evaluate`** (`SafetyLevel.A`, Informational):
+   - Safely parses and evaluates basic arithmetic expressions via AST.
+   - Parameters: `expression` (str, required).
+   - Supported operators: `+`, `-`, `*`, `/`, `//`, `%`, `**`, unary `+`/`-`, numbers.
+   - Purely in-memory with zero external side-effects.
+
+---
+
+## Safety Levels & Approval Gate
+
+Every step is tagged with a `SafetyLevel`:
 
 | Level | Label         | Approval Required | Typical Actions                         |
 |-------|---------------|-------------------|-----------------------------------------|
-| **A** | Informational | ❌ Auto-approved  | Read files, search, query               |
-| **B** | Low Risk      | ❌ Auto-approved  | Write logs, send notifications          |
-| **C** | Sensitive     | ✅ Required       | Edit configuration, send emails         |
-| **D** | Destructive   | ✅ Required       | Delete files, drop databases, overwrite |
+| **A** | Informational | ❌ Auto-approved  | Search, calculate, read visible info    |
+| **B** | Low Risk      | ❌ Auto-approved  | Status query, harmless notifications    |
+| **C** | Sensitive     | ✅ Required       | Modify configuration, write records     |
+| **D** | Destructive   | ✅ Required       | Delete records, privileged actions      |
 
-### Safety Gate Rule
-
-When `build_plan()` is called:
-- If **all** steps are level **A** or **B** → `requires_approval=False`, machine transitions to **EXECUTING**.
-- If **any** step is level **C** or **D** → `requires_approval=True`, `overall_safety_level` is set to the **most severe level present**, and the machine transitions to **AWAITING_APPROVAL**.
+### Gate Logic:
+- If all steps are **Level A or B** $\rightarrow$ `requires_approval=False`, transitions immediately to `EXECUTING`.
+- If any step is **Level C or D** $\rightarrow$ `requires_approval=True`, transitions to `AWAITING_APPROVAL`.
 
 ---
 
 ## State Machine
-
-### States
-
-| State               | Description                                          |
-|---------------------|------------------------------------------------------|
-| `IDLE`              | Default resting state, awaiting input                |
-| `LISTENING`         | Actively receiving voice/text input                  |
-| `PLANNING`          | Building an `ActionPlan` from a goal + steps         |
-| `AWAITING_APPROVAL` | Blocked on human approval (C/D safety levels present)|
-| `EXECUTING`         | Running workflow steps via tool executor             |
-| `VERIFYING`         | Checking execution results                           |
-| `RESPONDING`        | Formulating and delivering the final response        |
-| `ERROR`             | Unrecoverable failure captured; awaiting reset       |
-
-### Transition Diagram
 
 ```mermaid
 flowchart LR
@@ -86,177 +104,44 @@ flowchart LR
 
 ---
 
-## API Reference
-
-### `AgentStateMachine`
-
-```python
-from packages.agentic_workflow import AgentStateMachine, AgentState, WorkflowStep, SafetyLevel
-
-sm = AgentStateMachine()
-print(sm.state)  # AgentState.IDLE
-```
-
-#### `transition_to(new_state, metadata=None)`
-Validate and perform a state transition. Raises `InvalidTransitionError` for illegal transitions.
-
-#### `can_transition_to(target) -> bool`
-Return `True` if the target state is reachable from the current state.
-
-#### `build_plan(session_id, goal, steps) -> ActionPlan`
-Build an `ActionPlan` from a list of `WorkflowStep` objects and apply the safety gate. **Must be called in `PLANNING` state.**
-
-#### `approve_plan() -> ActionPlan`
-Approve the pending plan and transition to `EXECUTING`. **Must be in `AWAITING_APPROVAL`.**
-
-#### `reject_plan(reason) -> ActionPlan`
-Reject the pending plan, mark all pending steps as `"rejected"`, and return to `IDLE`. **Must be in `AWAITING_APPROVAL`.**
-
-#### `handle_error(error_message) -> dict`
-Transition to `ERROR` state and return recovery metadata dict with `error_message`, `previous_state`, `timestamp`, and `plan_id`.
-
-#### `reset()`
-Recover from `ERROR` → `IDLE`. Clears `current_plan` and `error_context`. **Must be in `ERROR`.**
-
-#### `get_transition_history() -> list[tuple[str, str, float]]`
-Return chronological list of `(from_state, to_state, timestamp)` tuples.
-
----
-
-## Mock Tool Executor
-
-### Registered Tools
-
-| Tool Name       | Description                                   |
-|-----------------|-----------------------------------------------|
-| `file.search`   | Simulated directory scan; returns mock paths  |
-| `file.move`     | Simulated file move with source/destination validation |
-| `calc.evaluate` | Safe arithmetic expression evaluator          |
-
-All tools return a `ToolResult` with `success`, `output`, `duration_ms`, `error`, and `timestamp`.
-
-### `file.search` Parameters
-
-| Parameter     | Type  | Default | Description                            |
-|---------------|-------|---------|----------------------------------------|
-| `pattern`     | `str` | `"*"`   | Glob pattern (e.g. `"*.py"`)           |
-| `directory`   | `str` | `"/"`   | Root directory to scan                 |
-| `max_results` | `int` | `10`    | Maximum number of results to return    |
-
-### `file.move` Parameters
-
-| Parameter     | Type   | Required | Description                          |
-|---------------|--------|----------|--------------------------------------|
-| `source`      | `str`  | ✅       | Absolute source path                 |
-| `destination` | `str`  | ✅       | Absolute destination path            |
-| `overwrite`   | `bool` | ❌       | Whether to overwrite destination     |
-
-### `calc.evaluate` Parameters
-
-| Parameter    | Type  | Required | Description                          |
-|--------------|-------|----------|--------------------------------------|
-| `expression` | `str` | ✅       | Arithmetic expression (e.g. `"2+3*4"`) |
-
-Supported operators: `+`, `-`, `*`, `/`, `//`, `%`, `**`, unary `-`/`+`, integer/float literals.
-
-### Error Simulation Mode
-
-```python
-executor = MockToolExecutor(simulate_failure=True)
-result = executor.execute("file.search", {"pattern": "*.py"})
-assert result.success is False
-assert "simulated" in result.error.lower()
-```
-
----
-
-## Code Examples
-
-### 1. Safe Plan (Level A/B → auto-executes)
+## Code Example
 
 ```python
 from packages.agentic_workflow import (
-    AgentStateMachine, AgentState, WorkflowStep, SafetyLevel
+    AgentStateMachine,
+    AgentState,
+    WorkflowStep,
+    SafetyLevel,
+    MockToolExecutor,
 )
-from packages.agentic_workflow.mock_executor import MockToolExecutor
 
+# 1. Initialize State Machine
 sm = AgentStateMachine()
 sm.transition_to(AgentState.LISTENING)
 sm.transition_to(AgentState.PLANNING)
 
+# 2. Build Plan with Harmless Mock Tool
 step = WorkflowStep(
     step_number=1,
-    description="Find Python files",
-    tool_name="file.search",
+    description="Calculate sales tax",
+    tool_name="calc.evaluate",
     safety_level=SafetyLevel.A,
-    parameters={"pattern": "*.py", "directory": "/src"},
+    parameters={"expression": "250 * 0.08"},
 )
 
-plan = sm.build_plan(session_id="sess-1", goal="List all Python files", steps=[step])
-assert sm.state == AgentState.EXECUTING  # Auto-proceeded
+plan = sm.build_plan(session_id="sess-01", goal="Tax calculation", steps=[step])
+assert sm.state == AgentState.EXECUTING
 
+# 3. Execute with Mock Tool Executor
 executor = MockToolExecutor()
-for s in plan.steps:
-    result = executor.execute(s.tool_name, s.parameters)
-    s.status = "completed" if result.success else "failed"
-    s.result = result.output
+result = executor.execute(step.tool_name, step.parameters)
+assert result.success is True
+assert result.output["result"] == 20.0
 
+# 4. Complete Lifecycle
 sm.transition_to(AgentState.VERIFYING)
 sm.transition_to(AgentState.RESPONDING)
 sm.transition_to(AgentState.IDLE)
-```
-
-### 2. Sensitive Plan (Level C/D → awaits approval)
-
-```python
-from packages.agentic_workflow import AgentStateMachine, AgentState, WorkflowStep, SafetyLevel
-
-sm = AgentStateMachine()
-sm.transition_to(AgentState.LISTENING)
-sm.transition_to(AgentState.PLANNING)
-
-step = WorkflowStep(
-    step_number=1,
-    description="Delete old log files",
-    tool_name="file.move",
-    safety_level=SafetyLevel.D,
-    parameters={"source": "/logs/old.log", "destination": "/archive/old.log"},
-)
-
-plan = sm.build_plan(session_id="sess-2", goal="Archive old logs", steps=[step])
-assert sm.state == AgentState.AWAITING_APPROVAL  # Needs human OK
-
-# Human approves:
-sm.approve_plan()
-assert sm.state == AgentState.EXECUTING
-
-# Or human rejects:
-# sm.reject_plan("Security policy violation")
-```
-
-### 3. Error Recovery
-
-```python
-sm = AgentStateMachine()
-sm.transition_to(AgentState.LISTENING)
-
-meta = sm.handle_error("Unexpected NullPointerException in tool router")
-print(meta["previous_state"])  # "LISTENING"
-print(sm.state)                # AgentState.ERROR
-
-sm.reset()
-print(sm.state)                # AgentState.IDLE — ready to retry
-```
-
-### 4. Calculator Tool
-
-```python
-from packages.agentic_workflow.mock_executor import MockToolExecutor
-
-executor = MockToolExecutor()
-result = executor.execute("calc.evaluate", {"expression": "100 * 0.85 + 5"})
-print(result.output["result"])   # 90.0
-print(result.duration_ms)        # e.g. 0.12
 ```
 
 ---
@@ -264,53 +149,22 @@ print(result.duration_ms)        # e.g. 0.12
 ## Testing & Coverage
 
 ```bash
-# Run only agentic_workflow tests with coverage report
-.venv/bin/pytest --cov=packages/agentic_workflow packages/agentic_workflow/tests/ -v
-
-# Run full project test suite
-.venv/bin/pytest
+# Run unit and integration tests with coverage
+.venv/bin/pytest --cov=packages/agentic_workflow packages/agentic_workflow/tests/test_agentic_workflow.py -v
 ```
 
-Current results:
+### Coverage Report:
 
-| Module              | Statements | Covered | Coverage |
-|---------------------|-----------|---------|----------|
-| `models.py`         | 59        | 59      | **100%** |
-| `state_machine.py`  | 80        | 80      | **100%** |
-| `mock_executor.py`  | 73        | 71      | **97%**  |
-| `__init__.py`       | 4         | 4       | **100%** |
-| **Total**           | **798**   | **796** | **99%**  |
+```text
+Name                                                       Stmts   Miss  Cover
+------------------------------------------------------------------------------
+packages\agentic_workflow\__init__.py                          4      0   100%
+packages\agentic_workflow\mock_executor.py                    68      2    97%
+packages\agentic_workflow\models.py                           82      0   100%
+packages\agentic_workflow\state_machine.py                    80      0   100%
+packages\agentic_workflow\tests\test_agentic_workflow.py     621      0   100%
+------------------------------------------------------------------------------
+TOTAL                                                        855      2    99%
 
----
-
-## TypeScript Interface Contract
-
-The file [`types.ts`](./types.ts) defines matching TypeScript interfaces for all Python models, enabling type-safe API response handling in the React frontend:
-
-```typescript
-import type { ActionPlan, WorkflowStep, SafetyLevel, AgentState, ToolResult } from './types';
-
-// Example: render plan approval UI
-function renderApprovalBanner(plan: ActionPlan) {
-  if (plan.requires_approval) {
-    return `⚠️ Plan requires approval (Safety Level ${plan.overall_safety_level})`;
-  }
-  return "✅ Plan auto-approved and executing";
-}
+129 passed in 1.24s (99% coverage)
 ```
-
----
-
-## Git Workflow
-
-```
-Repository: https://github.com/Yashuudevang/acd_voicebot
-Branch: feature/agentic-workflow
-Base: develop
-```
-
-Commits follow [Conventional Commits](https://www.conventionalcommits.org/):
-- `feat(workflow):` for new features
-- `fix(workflow):` for bug fixes
-- `test(workflow):` for tests
-- `docs(workflow):` for documentation
