@@ -2,18 +2,20 @@
 Human-in-the-loop approval gate and TTL expiration management.
 
 Manages approval requests for sensitive and destructive action plans,
-enforces configurable TTL expiration, and implements strict authorization checks.
+enforces configurable TTL expiration, implements strict authorization checks,
+and maintains a safe audit trail without sensitive arguments.
 """
 
 from __future__ import annotations
 
 import time
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from packages.agentic_workflow.models import (
     ActionPlan,
     ApprovalRequest,
     ApprovalStatus,
+    AuditEvent,
     PlanStatus,
     SafetyLevel,
     WorkflowPlan,
@@ -59,12 +61,53 @@ class ApprovalManager:
           approved before tool execution is allowed.
         * Any plan whose approval request is PENDING, REJECTED, or EXPIRED is
           STRICTLY forbidden from executing tools.
+        * Records safe audit trail entries for every approve, reject, and expiry event,
+          strictly omitting sensitive tool arguments.
     """
 
     def __init__(self, default_ttl_seconds: float = 300.0) -> None:
         self.default_ttl_seconds = default_ttl_seconds
         self._requests: Dict[str, ApprovalRequest] = {}
         self._plan_to_request_id: Dict[str, str] = {}
+        self.audit_trail: List[AuditEvent] = []
+
+    def record_audit_event(
+        self,
+        decision: Union[str, ApprovalStatus],
+        step_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        request_id: Optional[str] = None,
+        plan_id: Optional[str] = None,
+        timestamp: Optional[float] = None,
+    ) -> AuditEvent:
+        """Record a safe audit entry without sensitive arguments.
+
+        Args:
+            decision: Decision rendered ('APPROVED', 'REJECTED', 'EXPIRED').
+            step_id: Optional workflow step ID associated with the decision.
+            reason: Optional explanation or justification.
+            request_id: Associated approval request ID.
+            plan_id: Associated action plan ID.
+            timestamp: Epoch timestamp (defaults to current time).
+
+        Returns:
+            The recorded :class:`AuditEvent`.
+        """
+        dec_val = decision.value if isinstance(decision, ApprovalStatus) else str(decision)
+        event = AuditEvent(
+            step_id=step_id,
+            decision=dec_val,
+            reason=reason,
+            timestamp=timestamp if timestamp is not None else time.time(),
+            request_id=request_id,
+            plan_id=plan_id,
+        )
+        self.audit_trail.append(event)
+        return event
+
+    def get_audit_trail(self) -> List[AuditEvent]:
+        """Return the complete ordered list of recorded safe audit events."""
+        return list(self.audit_trail)
 
     def create_request(
         self,
@@ -72,6 +115,7 @@ class ApprovalManager:
         session_id: str,
         safety_level: SafetyLevel,
         ttl_seconds: Optional[float] = None,
+        step_id: Optional[str] = None,
     ) -> ApprovalRequest:
         """Create and register a pending approval request with optional TTL.
 
@@ -81,6 +125,7 @@ class ApprovalManager:
             safety_level: Severity triggering the gate (C or D).
             ttl_seconds: Time-to-live in seconds, or None for no expiration.
                          Defaults to `self.default_ttl_seconds`.
+            step_id: Optional step identifier requiring approval.
 
         Returns:
             The created :class:`ApprovalRequest`.
@@ -96,6 +141,7 @@ class ApprovalManager:
             status=ApprovalStatus.PENDING,
             expires_at=expires_at,
             created_at=now,
+            step_id=step_id,
         )
         self._requests[req.request_id] = req
         self._plan_to_request_id[plan_id] = req.request_id
@@ -118,21 +164,33 @@ class ApprovalManager:
         return self.get_request(req_id)
 
     def _check_and_update_expiry(self, req: ApprovalRequest) -> None:
-        """Mark *req* as EXPIRED if its TTL has elapsed."""
+        """Mark *req* as EXPIRED and record audit event if its TTL has elapsed."""
         if (
             req.status == ApprovalStatus.PENDING
             and req.expires_at is not None
             and time.time() > req.expires_at
         ):
+            now = time.time()
             req.status = ApprovalStatus.EXPIRED
+            req.decided_at = now
+            req.reason = req.reason or "TTL expired"
+            self.record_audit_event(
+                decision=ApprovalStatus.EXPIRED,
+                step_id=req.step_id,
+                reason=req.reason,
+                request_id=req.request_id,
+                plan_id=req.plan_id,
+                timestamp=now,
+            )
 
     def approve(
         self,
         request_id: str,
         decided_by: str = "operator",
         reason: Optional[str] = None,
+        step_id: Optional[str] = None,
     ) -> ApprovalRequest:
-        """Approve an active pending request.
+        """Approve an active pending request and record a safe audit event.
 
         Raises:
             ApprovalNotFoundError: If *request_id* is unknown.
@@ -151,6 +209,17 @@ class ApprovalManager:
         req.decided_at = now
         req.decided_by = decided_by
         req.reason = reason
+        if step_id is not None:
+            req.step_id = step_id
+
+        self.record_audit_event(
+            decision=ApprovalStatus.APPROVED,
+            step_id=req.step_id,
+            reason=reason,
+            request_id=req.request_id,
+            plan_id=req.plan_id,
+            timestamp=now,
+        )
         return req
 
     def reject(
@@ -158,20 +227,51 @@ class ApprovalManager:
         request_id: str,
         decided_by: str = "operator",
         reason: Optional[str] = None,
+        step_id: Optional[str] = None,
     ) -> ApprovalRequest:
-        """Reject an approval request."""
+        """Reject an approval request and record a safe audit event."""
         req = self.get_request(request_id)
         now = time.time()
         req.status = ApprovalStatus.REJECTED
         req.decided_at = now
         req.decided_by = decided_by
         req.reason = reason
+        if step_id is not None:
+            req.step_id = step_id
+
+        self.record_audit_event(
+            decision=ApprovalStatus.REJECTED,
+            step_id=req.step_id,
+            reason=reason,
+            request_id=req.request_id,
+            plan_id=req.plan_id,
+            timestamp=now,
+        )
         return req
 
-    def expire(self, request_id: str) -> ApprovalRequest:
-        """Explicitly transition an approval request to EXPIRED."""
+    def expire(
+        self,
+        request_id: str,
+        reason: Optional[str] = "TTL expired",
+        step_id: Optional[str] = None,
+    ) -> ApprovalRequest:
+        """Explicitly transition an approval request to EXPIRED and record audit event."""
         req = self.get_request(request_id)
-        req.status = ApprovalStatus.EXPIRED
+        if req.status != ApprovalStatus.EXPIRED:
+            now = time.time()
+            req.status = ApprovalStatus.EXPIRED
+            req.decided_at = now
+            req.reason = reason
+            if step_id is not None:
+                req.step_id = step_id
+            self.record_audit_event(
+                decision=ApprovalStatus.EXPIRED,
+                step_id=req.step_id,
+                reason=reason,
+                request_id=req.request_id,
+                plan_id=req.plan_id,
+                timestamp=now,
+            )
         return req
 
     def check_expiry(self, request_id: str) -> ApprovalStatus:
@@ -211,7 +311,18 @@ class ApprovalManager:
             if req.status == ApprovalStatus.APPROVED:
                 # Double-check that approval did not expire
                 if req.expires_at is not None and time.time() > req.expires_at:
+                    now = time.time()
                     req.status = ApprovalStatus.EXPIRED
+                    req.decided_at = now
+                    req.reason = req.reason or "TTL expired"
+                    self.record_audit_event(
+                        decision=ApprovalStatus.EXPIRED,
+                        step_id=req.step_id,
+                        reason=req.reason,
+                        request_id=req.request_id,
+                        plan_id=req.plan_id,
+                        timestamp=now,
+                    )
                     return False
                 return True
             # In all other states (PENDING, REJECTED, EXPIRED), strictly block

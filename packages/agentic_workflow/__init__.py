@@ -2,7 +2,7 @@
 Agentic Workflow & Tool Executor module.
 
 Provides models, finite state machine, DAG dependency validation, allow-listed
-tool registry, approval management, and resilient mock execution for agentic tasks.
+tool registry, approval management, safe audit trails, and resilient mock execution for agentic tasks.
 """
 
 from packages.agentic_workflow.approval import (
@@ -21,6 +21,7 @@ from packages.agentic_workflow.models import (
     AgentState,
     ApprovalRequest,
     ApprovalStatus,
+    AuditEvent,
     PermissionScope,
     PlanStatus,
     SafetyLevel,
@@ -59,6 +60,7 @@ __all__ = [
     "ActionPlan",
     "WorkflowPlan",
     "ApprovalRequest",
+    "AuditEvent",
     "ToolResult",
     "highest_safety_level",
     # State Machine

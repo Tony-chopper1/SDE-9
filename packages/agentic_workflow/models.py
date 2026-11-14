@@ -2,8 +2,8 @@
 Pydantic models for the Agentic Workflow & Tool Executor module.
 
 Defines safety classification enums, agent lifecycle states, permission scopes,
-approval requests, workflow data structures, and tool result contracts used
-throughout the agentic pipeline.
+approval requests, safe audit events, workflow data structures, and tool result
+contracts used throughout the agentic pipeline.
 """
 
 from __future__ import annotations
@@ -168,6 +168,29 @@ class WorkflowStep(BaseModel):
     is_idempotent: bool = True
 
 
+class AuditEvent(BaseModel):
+    """Safe audit trail entry recording human-in-the-loop decisions.
+
+    Contains step ID, decision rendered, optional rationale, and timestamp.
+    Explicitly contains NO sensitive arguments or tool parameters.
+
+    Attributes:
+        step_id: Identifier of the workflow step associated with the decision (if any).
+        decision: Decision rendered (e.g. 'APPROVED', 'REJECTED', 'EXPIRED').
+        reason: Optional human- or system-supplied rationale for the decision.
+        timestamp: Unix timestamp (seconds) when the event occurred.
+        request_id: Optional approval request ID.
+        plan_id: Optional action plan ID.
+    """
+
+    step_id: Optional[str] = None
+    decision: str
+    reason: Optional[str] = None
+    timestamp: float = Field(default_factory=time.time)
+    request_id: Optional[str] = None
+    plan_id: Optional[str] = None
+
+
 class ActionPlan(BaseModel):
     """An ordered collection of :class:`WorkflowStep` objects representing a multi-step goal.
 
@@ -185,6 +208,7 @@ class ActionPlan(BaseModel):
         rejected_at: Unix timestamp (seconds) when the plan was rejected, or ``None``.
         rejection_reason: Operator-supplied reason for rejection, or ``None``.
         execution_logs: Top-level log entries for the overall plan lifecycle.
+        audit_trail: Safe audit events recorded during plan decision gates.
     """
 
     plan_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -200,6 +224,7 @@ class ActionPlan(BaseModel):
     rejected_at: Optional[float] = None
     rejection_reason: Optional[str] = None
     execution_logs: List[str] = Field(default_factory=list)
+    audit_trail: List[AuditEvent] = Field(default_factory=list)
 
 
 # Alias for compatibility with DAG validator and plan interfaces
@@ -220,6 +245,7 @@ class ApprovalRequest(BaseModel):
         decided_by: Username or identity of the deciding entity.
         reason: Optional human-provided justification for decision.
         created_at: Epoch timestamp of creation.
+        step_id: Optional identifier of the workflow step requiring approval.
     """
 
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -232,6 +258,7 @@ class ApprovalRequest(BaseModel):
     decided_by: Optional[str] = None
     reason: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
+    step_id: Optional[str] = None
 
 
 class ToolResult(BaseModel):

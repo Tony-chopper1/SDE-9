@@ -2,7 +2,7 @@
  * TypeScript interfaces for the Agentic Workflow & Tool Executor module.
  *
  * Mirrors the Pydantic models defined in `packages/agentic_workflow/models.py`,
- * validator contracts, and approval requests for frontend and API consumer parity.
+ * validator contracts, safe audit trails, and approval requests for frontend and API consumer parity.
  *
  * @module agentic_workflow/types
  */
@@ -84,6 +84,25 @@ export type StepStatus =
 // ---------------------------------------------------------------------------
 
 /**
+ * Safe audit event recording human-in-the-loop decisions.
+ * Contains no sensitive arguments or parameters.
+ */
+export interface AuditEvent {
+  /** Identifier of the workflow step associated with the decision (if any). */
+  step_id?: string;
+  /** Decision rendered ('APPROVED' | 'REJECTED' | 'EXPIRED'). */
+  decision: string;
+  /** Optional human- or system-supplied rationale for the decision. */
+  reason?: string;
+  /** Unix timestamp (seconds) when the event occurred. */
+  timestamp: number;
+  /** Optional approval request ID. */
+  request_id?: string;
+  /** Optional plan ID. */
+  plan_id?: string;
+}
+
+/**
  * A single discrete action within an {@link ActionPlan}.
  */
 export interface WorkflowStep {
@@ -151,6 +170,8 @@ export interface ActionPlan {
   rejection_reason?: string;
   /** Top-level log entries for the overall plan lifecycle. */
   execution_logs: string[];
+  /** Safe audit events recorded during decision gates. */
+  audit_trail: AuditEvent[];
 }
 
 /**
@@ -182,6 +203,8 @@ export interface ApprovalRequest {
   reason?: string;
   /** Unix timestamp of creation. */
   created_at: number;
+  /** Optional identifier of the specific workflow step requiring approval. */
+  step_id?: string;
 }
 
 /**

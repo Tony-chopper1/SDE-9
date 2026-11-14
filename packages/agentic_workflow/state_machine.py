@@ -3,7 +3,7 @@ Finite state machine for the Agentic Workflow module.
 
 Manages the full lifecycle of an agent session: state transitions with
 validation, plan construction with safety classification, human-approval
-gating, DAG topological execution, and structured error handling.
+gating, DAG topological execution, structured error handling, and safe audit trails.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from typing import Collection, Dict, List, Optional, Tuple, Union
 from packages.agentic_workflow.models import (
     ActionPlan,
     AgentState,
+    AuditEvent,
     PermissionScope,
     PlanStatus,
     SafetyLevel,
@@ -103,6 +104,7 @@ class AgentStateMachine:
         * Enforces approval gate rules for sensitive / destructive plans.
         * Executes plans in DAG topological order via :meth:`execute_plan`.
         * Provides robust error recovery paths via :meth:`handle_error` and :meth:`reset`.
+        * Records safe audit events for approval decisions.
     """
 
     def __init__(self) -> None:
@@ -225,6 +227,17 @@ class AgentStateMachine:
         self.current_plan.execution_logs.append(
             f"[{now}] Plan approved; transitioning to EXECUTING."
         )
+
+        # Record audit event on the plan
+        event = AuditEvent(
+            step_id=None,
+            decision="APPROVED",
+            reason="Plan approved by operator",
+            timestamp=now,
+            plan_id=self.current_plan.plan_id,
+        )
+        self.current_plan.audit_trail.append(event)
+
         self.transition_to(
             AgentState.EXECUTING,
             metadata={"plan_id": self.current_plan.plan_id, "action": "approved"},
@@ -245,6 +258,16 @@ class AgentStateMachine:
         self.current_plan.rejection_reason = reason
         self.current_plan.status = PlanStatus.REJECTED
         self.current_plan.execution_logs.append(f"[{now}] Plan rejected: {reason}")
+
+        # Record safe audit event on the plan
+        event = AuditEvent(
+            step_id=None,
+            decision="REJECTED",
+            reason=reason,
+            timestamp=now,
+            plan_id=self.current_plan.plan_id,
+        )
+        self.current_plan.audit_trail.append(event)
 
         for step in self.current_plan.steps:
             if step.status == "pending":
@@ -301,6 +324,10 @@ class AgentStateMachine:
         # Non-negotiable Approval Safety Check
         if approval_manager is not None:
             if not approval_manager.is_execution_permitted(self.current_plan):
+                # Synchronize audit trail entries for this plan
+                for ev in approval_manager.get_audit_trail():
+                    if ev.plan_id == self.current_plan.plan_id and ev not in self.current_plan.audit_trail:
+                        self.current_plan.audit_trail.append(ev)
                 self.handle_error("Execution blocked: Plan approval is missing, rejected, or expired.")
                 raise PermissionError("Plan execution is not permitted by approval gate.")
         else:

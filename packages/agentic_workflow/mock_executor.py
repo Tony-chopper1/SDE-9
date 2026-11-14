@@ -10,6 +10,7 @@ Week 2 enhancements:
     * Bounded retries (up to 3 attempts with exponential backoff) for idempotent tools.
     * Suppression of retries for non-idempotent tools.
     * Cancellation support (cancel() / reset_cancellation()).
+    * Execution history tracking for assertion of zero tool invocations when gates reject.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import ast
 import operator
 import threading
 import time
-from typing import Any, Collection, Dict, Optional
+from typing import Any, Collection, Dict, List, Optional
 
 from packages.agentic_workflow.models import (
     PermissionScope,
@@ -107,6 +108,7 @@ class MockToolExecutor:
         * Immediate fail-fast (no retry) for non-idempotent tools.
         * Safe cooperative cancellation.
         * Parameter schema and permission scope checks via :class:`ToolRegistry`.
+        * Comprehensive execution tracking in `execution_history`.
     """
 
     def __init__(
@@ -121,6 +123,7 @@ class MockToolExecutor:
         self._cancelled: bool = False
         self._cancellation_reason: Optional[str] = None
         self._fail_first_n_attempts: Dict[str, int] = {}
+        self.execution_history: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Cancellation Controls
@@ -166,6 +169,13 @@ class MockToolExecutor:
                 duration_ms=0.0,
                 error=f"Execution cancelled: {self._cancellation_reason}",
             )
+
+        # Track that an execution attempt was dispatched
+        self.execution_history.append({
+            "tool_name": tool_name,
+            "parameters": dict(parameters),
+            "timestamp": time.time(),
+        })
 
         # Check programmed temporary failure count
         if self._fail_first_n_attempts.get(tool_name, 0) > 0:
