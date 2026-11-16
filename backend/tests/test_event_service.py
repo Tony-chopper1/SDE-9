@@ -81,3 +81,55 @@ def test_event_payload_size_limit():
 def test_invalid_event_type():
     with pytest.raises(ValidationError):
         EventCreate(event_type="invalid event type")
+@pytest.mark.asyncio
+async def test_stream_replays_events_after_last_event_id():
+    service = EventService()
+    session_id = uuid4()
+
+    first = await service.publish_event(
+        session_id,
+        EventCreate(event_type="event.first"),
+    )
+
+    second = await service.publish_event(
+        session_id,
+        EventCreate(event_type="event.second"),
+    )
+
+    third = await service.publish_event(
+        session_id,
+        EventCreate(event_type="event.third"),
+    )
+
+    stream = service.stream_events(
+        session_id,
+        after_event_id=first.event_id,
+    )
+
+    try:
+        replayed = await anext(stream)
+        assert replayed.event_id == second.event_id
+
+        replayed = await anext(stream)
+        assert replayed.event_id == third.event_id
+    finally:
+        await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_rejects_unknown_last_event_id():
+    service = EventService()
+    session_id = uuid4()
+
+    await service.publish_event(
+        session_id,
+        EventCreate(event_type="event.first"),
+    )
+
+    stream = service.stream_events(
+        session_id,
+        after_event_id=uuid4(),
+    )
+
+    with pytest.raises(ValueError, match="Event replay cursor not found"):
+        await anext(stream)

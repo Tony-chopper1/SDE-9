@@ -40,10 +40,8 @@ def test_get_session_by_id():
 
 
 def test_get_session_not_found():
-    non_existent_id = uuid4()
-
     response = client.get(
-        f"/api/v1/sessions/{non_existent_id}"
+        f"/api/v1/sessions/{uuid4()}"
     )
 
     assert response.status_code == 404
@@ -75,10 +73,8 @@ def test_pause_session():
 
 
 def test_pause_session_not_found():
-    non_existent_id = uuid4()
-
     response = client.post(
-        f"/api/v1/sessions/{non_existent_id}/pause"
+        f"/api/v1/sessions/{uuid4()}/pause"
     )
 
     assert response.status_code == 404
@@ -108,10 +104,8 @@ def test_stop_session():
 
 
 def test_stop_session_not_found():
-    non_existent_id = uuid4()
-
     response = client.post(
-        f"/api/v1/sessions/{non_existent_id}/stop"
+        f"/api/v1/sessions/{uuid4()}/stop"
     )
 
     assert response.status_code == 404
