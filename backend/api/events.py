@@ -1,8 +1,7 @@
-
-import json
+﻿import json
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from backend.schemas.events import EventCreate
@@ -36,7 +35,13 @@ async def publish_event(
 
 
 @router.get("/{session_id}/events")
-async def stream_events(session_id: UUID):
+async def stream_events(
+    session_id: UUID,
+    last_event_id: str | None = Header(
+        default=None,
+        alias="Last-Event-ID",
+    ),
+):
     session = session_service.get_session(session_id)
 
     if session is None:
@@ -45,8 +50,31 @@ async def stream_events(session_id: UUID):
             detail="Session not found",
         )
 
+    cursor = None
+
+    if last_event_id:
+        try:
+            cursor = UUID(last_event_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid Last-Event-ID",
+            )
+
+        # Validate the cursor before starting the streaming response.
+        history = event_service.get_events(session_id)
+
+        if not any(event.event_id == cursor for event in history):
+            raise HTTPException(
+                status_code=400,
+                detail="Unknown Last-Event-ID for this session",
+            )
+
     async def event_generator():
-        async for event in event_service.stream_events(session_id):
+        async for event in event_service.stream_events(
+            session_id,
+            after_event_id=cursor,
+        ):
             event_data = json.dumps(
                 event.model_dump(mode="json"),
                 ensure_ascii=False,

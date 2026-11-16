@@ -1,12 +1,14 @@
 
 """
 SDK-9 AI Voice Co-Pilot - Backend Gateway
-Owner: Apeksha KT (feature/backend-fastapi - Task W5)
+Week 3: Health aggregation, rate limiting and request tracing.
 """
 
+import importlib.util
 import logging
 import os
 import time
+from collections import deque
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -17,16 +19,16 @@ from fastapi.responses import JSONResponse
 
 from backend.api.sessions import router as session_router
 from backend.api.events import router as event_router
+from backend.api.pipeline import router as pipeline_router
 from backend.schemas.api_schemas import (
     StandardResponse,
     APIError,
     ChatRequest,
 )
 
-# Load environment variables
 load_dotenv()
 
-# Validate mock mode configuration
+# Configuration
 mock_mode_value = os.getenv("MOCK_MODE", "true").strip().lower()
 
 if mock_mode_value not in {"true", "1", "yes", "false", "0", "no"}:
@@ -37,52 +39,19 @@ logger = logging.getLogger("backend.gateway")
 
 app = FastAPI(
     title="SDK-9 Voicebot API",
-    version="1.0.0",
+    version="1.1.0",
     description="API Gateway for AI Voice Co-Pilot",
 )
 
 app.state.mock_mode = mock_mode_value in {"true", "1", "yes"}
 
-
-# Request logging and correlation ID middleware
-@app.middleware("http")
-async def request_logging_middleware(
-    request: Request,
-    call_next,
-) -> Response:
-    start_time = time.perf_counter()
-
-    request_id = request.headers.get("X-Request-ID") or str(uuid4())
-    correlation_id = (
-        request.headers.get("X-Correlation-ID") or request_id
-    )
-
-    request.state.request_id = request_id
-    request.state.correlation_id = correlation_id
-
-    response = await call_next(request)
-
-    duration_ms = (time.perf_counter() - start_time) * 1000
-
-    logger.info(
-        "request_completed method=%s path=%s status=%s "
-        "duration_ms=%.2f request_id=%s correlation_id=%s",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-        request_id,
-        correlation_id,
-    )
-
-    response.headers["X-Response-Time"] = f"{duration_ms:.2f}ms"
-    response.headers["X-Request-ID"] = request_id
-    response.headers["X-Correlation-ID"] = correlation_id
-
-    return response
+# In-memory rate limiter.
+# Limit applies to each client IP on the pipeline endpoint.
+app.state.rate_limit_requests = {}
+app.state.rate_limit_max = 120
+app.state.rate_limit_window = 60
 
 
-# Standard safe error response
 def create_error_response(
     request: Request,
     status_code: int,
@@ -120,6 +89,77 @@ def create_error_response(
             ),
         },
     )
+
+
+# Request logging, ID propagation and pipeline rate limiting.
+@app.middleware("http")
+async def request_logging_middleware(
+    request: Request,
+    call_next,
+) -> Response:
+    start_time = time.perf_counter()
+
+    request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    correlation_id = (
+        request.headers.get("X-Correlation-ID") or request_id
+    )
+
+    request.state.request_id = request_id
+    request.state.correlation_id = correlation_id
+
+    response = None
+
+    if request.url.path == "/api/v1/pipeline/process":
+        client_ip = (
+            request.client.host
+            if request.client
+            else "unknown"
+        )
+
+        now = time.monotonic()
+        requests = app.state.rate_limit_requests.setdefault(
+            client_ip,
+            deque(),
+        )
+
+        window = app.state.rate_limit_window
+
+        while requests and now - requests[0] >= window:
+            requests.popleft()
+
+        if len(requests) >= app.state.rate_limit_max:
+            response = create_error_response(
+                request=request,
+                status_code=429,
+                code="RATE_LIMIT_EXCEEDED",
+                message="Too many pipeline requests. Please try again later.",
+                retryable=True,
+            )
+            response.headers["Retry-After"] = str(window)
+        else:
+            requests.append(now)
+
+    if response is None:
+        response = await call_next(request)
+
+    duration_ms = (time.perf_counter() - start_time) * 1000
+
+    logger.info(
+        "request_completed method=%s path=%s status=%s "
+        "duration_ms=%.2f request_id=%s correlation_id=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+        request_id,
+        correlation_id,
+    )
+
+    response.headers["X-Response-Time"] = f"{duration_ms:.2f}ms"
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Correlation-ID"] = correlation_id
+
+    return response
 
 
 # HTTP exception handler
@@ -216,17 +256,51 @@ app.add_middleware(
 # Register API routers
 app.include_router(session_router)
 app.include_router(event_router)
+app.include_router(pipeline_router)
+
+
+# Component health aggregation
+def get_component_health():
+    components = {
+        "audio": "packages.audio",
+        "speech_to_text": "packages.speech_to_text",
+        "context_reasoning": "packages.context_reasoning",
+        "agentic_workflow": "packages.agentic_workflow",
+        "pipeline": "backend.services.pipeline_service",
+    }
+
+    results = {}
+
+    for name, module_name in components.items():
+        try:
+            available = importlib.util.find_spec(module_name) is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            available = False
+
+        results[name] = (
+            "healthy" if available else "unavailable"
+        )
+
+    return results
 
 
 # Health check endpoint
 @app.get("/api/v1/health", response_model=StandardResponse)
 def health_check():
+    components = get_component_health()
+
+    all_healthy = all(
+        status == "healthy"
+        for status in components.values()
+    )
+
     return StandardResponse(
-        success=True,
+        success=all_healthy,
         data={
-            "status": "healthy",
+            "status": "healthy" if all_healthy else "degraded",
             "service": "sdk-9-voicebot",
             "mock_mode": app.state.mock_mode,
+            "components": components,
         },
     )
 
@@ -235,12 +309,20 @@ def health_check():
 @app.get("/api/v1/ready", response_model=StandardResponse)
 @app.get("/ready", response_model=StandardResponse)
 def readiness_check():
+    components = get_component_health()
+
+    all_ready = all(
+        status == "healthy"
+        for status in components.values()
+    )
+
     return StandardResponse(
-        success=True,
+        success=all_ready,
         data={
-            "status": "ready",
+            "status": "ready" if all_ready else "not_ready",
             "service": "sdk-9-voicebot",
             "mock_mode": app.state.mock_mode,
+            "components": components,
         },
     )
 
