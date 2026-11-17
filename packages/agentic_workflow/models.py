@@ -1,9 +1,9 @@
 """
 Pydantic models for the Agentic Workflow & Tool Executor module.
 
-Defines safety classification enums, agent lifecycle states, workflow schemas
-(WorkflowPlan, WorkflowStep, ToolSpec, ApprovalRequest, WorkflowResult),
-and supporting contracts.
+Defines safety classification enums, agent lifecycle states, permission scopes,
+approval requests, safe audit events, workflow schemas (WorkflowPlan, WorkflowStep,
+ToolSpec, ApprovalRequest, WorkflowResult), and tool result contracts.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 import uuid
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -25,7 +25,7 @@ class SafetyLevel(str, Enum):
     """Classification of action risk, determining whether human approval is required.
 
     Levels:
-        A: Informational – read-only, harmless, no side-effects; auto-approved.
+        A: Informational – read-only, no side-effects; auto-approved.
         B: Low Risk – minor writes or notifications; auto-approved with audit log.
         C: Sensitive – modifies important state; requires explicit human approval.
         D: Destructive – irreversible or high-impact actions; requires explicit human approval.
@@ -82,21 +82,60 @@ class AgentState(str, Enum):
     ERROR = "ERROR"
 
 
+class PermissionScope(str, Enum):
+    """Permission boundaries required to invoke specific tools.
+
+    Scopes:
+        READ_ONLY: Read-only inspection and querying (e.g. file search, calculator).
+        WORKSPACE_WRITE: File modifications within the workspace boundary.
+        SYSTEM_EXEC: Privileged system-level execution.
+    """
+
+    READ_ONLY = "READ_ONLY"
+    WORKSPACE_WRITE = "WORKSPACE_WRITE"
+    SYSTEM_EXEC = "SYSTEM_EXEC"
+
+
+class ApprovalStatus(str, Enum):
+    """Lifecycle status of a human-in-the-loop approval request."""
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+
+
+class PlanStatus(str, Enum):
+    """Execution status of a workflow plan."""
+
+    PENDING = "PENDING"
+    PLANNING = "PLANNING"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+    EXECUTING = "EXECUTING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
 # ---------------------------------------------------------------------------
-# Workflow Data Models
+# Tool Specification Model
 # ---------------------------------------------------------------------------
 
 
 class ToolSpec(BaseModel):
-    """Specification defining parameters, safety level, and metadata for a tool.
+    """Specification of an authorized tool in the agentic workflow pipeline.
 
     Attributes:
-        name: Dot-namespaced or identifier name of the tool (e.g. ``"calc.evaluate"``).
-        description: Human-readable description of what the tool performs.
-        safety_level: Risk classification for tool invocation.
-        is_idempotent: Whether repeated invocations produce identical results safely.
-        parameters: JSON Schema or dict mapping parameter names to expected types.
-        required_parameters: List of mandatory parameter names.
+        name: Dot-namespaced tool identifier (e.g. ``"file.search"``).
+        description: Human-readable summary of tool functionality.
+        safety_level: Default risk classification governing approval requirements.
+        is_idempotent: Whether repeated invocations produce identical results without side-effects.
+        parameters: Key-value mapping of parameter names to expected types.
+        required_parameters: List of parameter names that must be provided.
+        permission_scope: Required permission boundary to invoke this tool.
     """
 
     name: str
@@ -105,6 +144,12 @@ class ToolSpec(BaseModel):
     is_idempotent: bool = True
     parameters: Dict[str, Any] = Field(default_factory=dict)
     required_parameters: List[str] = Field(default_factory=list)
+    permission_scope: PermissionScope = PermissionScope.READ_ONLY
+
+
+# ---------------------------------------------------------------------------
+# Workflow Data Models
+# ---------------------------------------------------------------------------
 
 
 class WorkflowStep(BaseModel):
@@ -114,11 +159,11 @@ class WorkflowStep(BaseModel):
         id: Unique identifier for this step (UUID string).
         step_number: 1-based ordering index within the plan.
         description: Human-readable description of the action.
-        tool_name: Dot-namespaced tool identifier (e.g. ``"file.search"``, ``"calc.evaluate"``).
+        tool_name: Dot-namespaced tool identifier (e.g. ``"file.search"``).
         parameters: Key-value arguments forwarded to the tool executor.
         safety_level: Risk classification governing approval requirements.
         status: Lifecycle status – one of ``pending``, ``running``,
-            ``completed``, ``failed``, ``rejected``.
+            ``completed``, ``failed``, ``rejected``, ``cancelled``.
         result: Arbitrary output returned by the tool executor upon success.
         error: Error message populated on failure.
         retry_count: Number of execution attempts made for this step.
@@ -144,9 +189,33 @@ class WorkflowStep(BaseModel):
     started_at: Optional[float] = None
     completed_at: Optional[float] = None
     execution_logs: List[str] = Field(default_factory=list)
+    # Week 2 Enhancements
     depends_on: List[str] = Field(default_factory=list)
     timeout_seconds: Optional[float] = None
     is_idempotent: bool = True
+
+
+class AuditEvent(BaseModel):
+    """Safe audit trail entry recording human-in-the-loop decisions.
+
+    Contains step ID, decision rendered, optional rationale, and timestamp.
+    Explicitly contains NO sensitive arguments or tool parameters.
+
+    Attributes:
+        step_id: Identifier of the workflow step associated with the decision (if any).
+        decision: Decision rendered (e.g. 'APPROVED', 'REJECTED', 'EXPIRED').
+        reason: Optional human- or system-supplied rationale for the decision.
+        timestamp: Unix timestamp (seconds) when the event occurred.
+        request_id: Optional approval request ID.
+        plan_id: Optional action plan ID.
+    """
+
+    step_id: Optional[str] = None
+    decision: str
+    reason: Optional[str] = None
+    timestamp: float = Field(default_factory=time.time)
+    request_id: Optional[str] = None
+    plan_id: Optional[str] = None
 
 
 class WorkflowPlan(BaseModel):
@@ -160,11 +229,13 @@ class WorkflowPlan(BaseModel):
         current_step_index: Zero-based index of the currently active step.
         overall_safety_level: Highest :class:`SafetyLevel` across all steps.
         requires_approval: ``True`` when at least one step is level C or D.
+        status: Lifecycle status of the overall plan.
         created_at: Unix timestamp (seconds) of plan creation.
         approved_at: Unix timestamp (seconds) when the plan was approved, or ``None``.
         rejected_at: Unix timestamp (seconds) when the plan was rejected, or ``None``.
         rejection_reason: Operator-supplied reason for rejection, or ``None``.
         execution_logs: Top-level log entries for the overall plan lifecycle.
+        audit_trail: Safe audit events recorded during decision gates.
     """
 
     plan_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -174,11 +245,13 @@ class WorkflowPlan(BaseModel):
     current_step_index: int = 0
     overall_safety_level: SafetyLevel = SafetyLevel.A
     requires_approval: bool = False
+    status: Union[PlanStatus, str] = PlanStatus.PENDING
     created_at: float = Field(default_factory=time.time)
     approved_at: Optional[float] = None
     rejected_at: Optional[float] = None
     rejection_reason: Optional[str] = None
     execution_logs: List[str] = Field(default_factory=list)
+    audit_trail: List[AuditEvent] = Field(default_factory=list)
 
 
 # Backward compatibility alias for Week 1 codebase
@@ -193,24 +266,26 @@ class ApprovalRequest(BaseModel):
         plan_id: Identifier of the associated :class:`WorkflowPlan`.
         session_id: Session identifier of the originating interaction.
         safety_level: Severity level triggering the approval requirement.
-        status: Current status (e.g. ``"PENDING"``, ``"APPROVED"``, ``"REJECTED"``).
+        status: Current status (:class:`ApprovalStatus` or str).
         expires_at: Epoch timestamp after which the request becomes expired.
         decided_at: Epoch timestamp when the decision was recorded.
         decided_by: Username or identifier of the deciding entity.
         reason: Optional human-provided justification for the decision.
         created_at: Epoch timestamp of creation.
+        step_id: Optional identifier of the workflow step requiring approval.
     """
 
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     plan_id: str
     session_id: str
     safety_level: SafetyLevel
-    status: str = "PENDING"
+    status: Union[ApprovalStatus, str] = ApprovalStatus.PENDING
     expires_at: Optional[float] = None
     decided_at: Optional[float] = None
     decided_by: Optional[str] = None
     reason: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
+    step_id: Optional[str] = None
 
 
 class WorkflowResult(BaseModel):
@@ -233,5 +308,5 @@ class WorkflowResult(BaseModel):
     timestamp: float = Field(default_factory=time.time)
 
 
-# Backward compatibility alias for Week 1 codebase
+# Backward compatibility alias
 ToolResult = WorkflowResult

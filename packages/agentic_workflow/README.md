@@ -1,31 +1,37 @@
 # Agentic Workflow Module (`packages/agentic_workflow/`)
 
 > **Owner**: Chirantan R Kuppelur · Branch: `feature/agentic-workflow`  
-> **Task**: W4 – Agentic Workflow: Schemas, State Machine & Harmless Mock Tool Executor (Week 1)
+> **Module**: W4 – Agentic Workflow: Schemas, State Machine, Harmless Tools & Safety Gate
 
 ---
 
 ## Overview
 
 The `agentic_workflow` package provides the core orchestration layer for the SDK-9 AI Voice Co-Pilot. It implements:
-- Standardized domain schemas: `WorkflowPlan`, `WorkflowStep`, `ToolSpec`, `ApprovalRequest`, and `WorkflowResult`.
-- A finite-state machine that governs multi-step agentic decisions and transitions.
-- A safety-classification gate (Levels A to D) enforcing human approval for sensitive/destructive operations.
-- A strictly harmless mock tool execution engine with exactly two harmless tools (`file.search` and `calc.evaluate`). Consequential tools like `file.move` or external network dispatch have been removed to prevent side-effects.
+- **Standardized Domain Schemas**: `WorkflowPlan`, `WorkflowStep`, `ToolSpec`, `ApprovalRequest`, and `WorkflowResult` (with backward-compatible aliases `ActionPlan` and `ToolResult`).
+- **Finite-State Machine (`AgentStateMachine`)**: Governs multi-step agent decisions, transitions, and lifecycle state tracking with millisecond timestamps.
+- **Safety Gate**: Categorizes operations into Safety Levels A–D, enforcing human approval for sensitive (`SafetyLevel.C`) and destructive (`SafetyLevel.D`) actions before execution.
+- **Strictly Harmless Mock Tool Executor**: Exactly two harmless mock tools (`file.search` and `calc.evaluate`). Consequential tools like `file.move` or external sending have been removed to prevent side-effects.
+- **DAG Dependency Analysis**: Validates step dependencies and detects circular cycles using 3-color DFS.
+- **Approval Gate & Safe Audit Trail**: Configurable TTL expiration and safe audit logging without sensitive parameters.
 
 ---
 
-## Module Structure
+## Module Layout
 
 ```
 packages/agentic_workflow/
 ├── __init__.py          # Public API re-exports
 ├── models.py            # WorkflowPlan, WorkflowStep, ToolSpec, ApprovalRequest, WorkflowResult
-├── state_machine.py     # AgentStateMachine FSM with safety gate
-├── mock_executor.py     # MockToolExecutor (harmless mock tools)
+├── state_machine.py     # AgentStateMachine FSM with safety gate & topological execution
+├── mock_executor.py     # MockToolExecutor (harmless mock tools: file.search, calc.evaluate)
+├── validator.py         # DAG cycle detection & topological ordering
+├── registry.py          # Allow-listed tool registry & permission scopes
+├── approval.py          # Approval request lifecycle, TTL expiry & safe audit trail
 ├── types.ts             # TypeScript interfaces mirroring all schemas
 └── tests/
-    └── test_agentic_workflow.py  # Unit + integration test suite (129 tests, 99% coverage)
+    ├── test_agentic_workflow.py        # Week 1 tests (129 tests)
+    └── test_validation_and_safety.py   # Week 2 tests
 ```
 
 ---
@@ -34,13 +40,24 @@ packages/agentic_workflow/
 
 | Schema | Purpose | Key Attributes |
 |---|---|---|
-| **`WorkflowPlan`** | Multi-step agentic execution plan | `plan_id`, `session_id`, `goal`, `steps`, `overall_safety_level`, `requires_approval`, `approved_at`, `rejected_at`, `rejection_reason` |
-| **`WorkflowStep`** | Discrete action step in a plan | `id`, `step_number`, `description`, `tool_name`, `parameters`, `safety_level`, `status`, `retry_count`, `execution_logs` |
-| **`ToolSpec`** | Specification of an authorized tool | `name`, `description`, `safety_level`, `is_idempotent`, `parameters`, `required_parameters` |
-| **`ApprovalRequest`** | Human-in-the-loop approval contract | `request_id`, `plan_id`, `session_id`, `safety_level`, `status`, `expires_at`, `decided_at`, `decided_by`, `reason` |
+| **`WorkflowPlan`** | Multi-step agentic execution plan | `plan_id`, `session_id`, `goal`, `steps`, `overall_safety_level`, `requires_approval`, `approved_at`, `rejected_at`, `rejection_reason`, `audit_trail` |
+| **`WorkflowStep`** | Discrete action step in a plan | `id`, `step_number`, `description`, `tool_name`, `parameters`, `safety_level`, `status`, `retry_count`, `depends_on`, `timeout_seconds`, `is_idempotent`, `execution_logs` |
+| **`ToolSpec`** | Specification of an authorized tool | `name`, `description`, `safety_level`, `is_idempotent`, `parameters`, `required_parameters`, `permission_scope` |
+| **`ApprovalRequest`** | Human-in-the-loop approval contract | `request_id`, `plan_id`, `session_id`, `safety_level`, `status`, `expires_at`, `decided_at`, `decided_by`, `reason`, `step_id` |
 | **`WorkflowResult`** | Standard result of tool execution | `tool_name`, `success`, `output`, `duration_ms`, `error`, `timestamp` |
 
-> *Note: For backwards compatibility with initial starter code, aliases `ActionPlan = WorkflowPlan` and `ToolResult = WorkflowResult` are provided.*
+> *Note: For backwards compatibility, aliases `ActionPlan = WorkflowPlan` and `ToolResult = WorkflowResult` are provided.*
+
+---
+
+## Safety Classification Levels
+
+| Level | Name | Approval Required | Description |
+|:---:|:---|:---:|:---|
+| **A** | Informational | No | Read-only inspection; zero side-effects (e.g. `file.search`, `calc.evaluate`). Auto-proceeds to `EXECUTING`. |
+| **B** | Low Risk | No | Minor writes or notifications. Auto-proceeds with audit log. |
+| **C** | Sensitive | **Yes** | Modifies significant state. Requires explicit human sign-off (`AWAITING_APPROVAL`). |
+| **D** | Destructive | **Yes** | High-impact actions. Requires explicit human sign-off (`AWAITING_APPROVAL`). |
 
 ---
 
@@ -50,61 +67,49 @@ Per safety requirements, consequential operations (such as file moving/renaming,
 
 1. **`file.search`** (`SafetyLevel.A`, Informational):
    - Harmless, read-only simulation of glob directory scanning.
-   - Parameters: `pattern` (str, default: `*`), `directory` (str, default: `/`), `max_results` (int, default: 10).
-   - Generates simulated mock path strings without touching the physical filesystem.
+   - Parameters: `pattern` (str, default: `*`), `directory` (str, default: `/`), `max_results` (int, default: `10`).
+   - Generates simulated paths deterministically without disk operations.
 
 2. **`calc.evaluate`** (`SafetyLevel.A`, Informational):
-   - Safely parses and evaluates basic arithmetic expressions via AST.
+   - Purely in-memory evaluation of arithmetic expressions using a restricted Python AST evaluator.
    - Parameters: `expression` (str, required).
-   - Supported operators: `+`, `-`, `*`, `/`, `//`, `%`, `**`, unary `+`/`-`, numbers.
-   - Purely in-memory with zero external side-effects.
+   - Supported operators: `+`, `-`, `*`, `/`, `//`, `%`, `**`, unary `+` and `-`.
+   - Function calls, variable lookups, and built-ins are strictly disallowed.
 
 ---
 
-## Safety Levels & Approval Gate
+## State Machine Lifecycle
 
-Every step is tagged with a `SafetyLevel`:
-
-| Level | Label         | Approval Required | Typical Actions                         |
-|-------|---------------|-------------------|-----------------------------------------|
-| **A** | Informational | ❌ Auto-approved  | Search, calculate, read visible info    |
-| **B** | Low Risk      | ❌ Auto-approved  | Status query, harmless notifications    |
-| **C** | Sensitive     | ✅ Required       | Modify configuration, write records     |
-| **D** | Destructive   | ✅ Required       | Delete records, privileged actions      |
-
-### Gate Logic:
-- If all steps are **Level A or B** $\rightarrow$ `requires_approval=False`, transitions immediately to `EXECUTING`.
-- If any step is **Level C or D** $\rightarrow$ `requires_approval=True`, transitions to `AWAITING_APPROVAL`.
-
----
-
-## State Machine
-
-```mermaid
-flowchart LR
-    IDLE --> LISTENING
-    IDLE --> ERROR
-    LISTENING --> PLANNING
-    LISTENING --> IDLE
-    LISTENING --> ERROR
-    PLANNING --> AWAITING_APPROVAL
-    PLANNING --> EXECUTING
-    PLANNING --> ERROR
-    AWAITING_APPROVAL --> EXECUTING
-    AWAITING_APPROVAL --> IDLE
-    AWAITING_APPROVAL --> ERROR
-    EXECUTING --> VERIFYING
-    EXECUTING --> ERROR
-    VERIFYING --> RESPONDING
-    VERIFYING --> ERROR
-    RESPONDING --> IDLE
-    RESPONDING --> ERROR
-    ERROR --> IDLE
+```
+    ┌──────┐       listening       ┌───────────┐       plan        ┌──────────┐
+    │ IDLE │ ────────────────────> │ LISTENING │ ────────────────> │ PLANNING │
+    └──────┘ <──────────────────── └───────────┘                   └──────────┘
+       ^             cancel                                              │
+       │                                            needs_approval=True  │  needs_approval=False
+       │                                           ┌─────────────────────┴──────────────────┐
+       │                                           ▼                                        ▼
+       │     reject                       ┌───────────────────┐      approve         ┌───────────┐
+       ├───────────────────────────────── │ AWAITING_APPROVAL │ ───────────────────> │ EXECUTING │
+       │                                  └───────────────────┘                      └───────────┘
+       │                                                                                   │
+       │                                                                                   ▼
+       │     complete                                                                ┌───────────┐
+       ├──────────────────────────────────────────────────────────────────────────── │ VERIFYING │
+       │                                                                             └───────────┘
+       │                                                                                   │
+       │     response sent                                                                 ▼
+       │ <────────────────────────────────────────────────────────────────────────── ┌────────────┐
+       │                                                                             │ RESPONDING │
+       │                                                                             └────────────┘
+       │     reset
+       └─── ┌───────┐
+            │ ERROR │ <── (Any state on failure / approval rejection)
+            └───────┘
 ```
 
 ---
 
-## Code Example
+## Quickstart Example
 
 ```python
 from packages.agentic_workflow import (
@@ -148,23 +153,12 @@ sm.transition_to(AgentState.IDLE)
 
 ## Testing & Coverage
 
+Run the tests with pytest:
+
 ```bash
 # Run unit and integration tests with coverage
-.venv/bin/pytest --cov=packages/agentic_workflow packages/agentic_workflow/tests/test_agentic_workflow.py -v
-```
+.venv/bin/pytest packages/agentic_workflow/tests/ -v
 
-### Coverage Report:
-
-```text
-Name                                                       Stmts   Miss  Cover
-------------------------------------------------------------------------------
-packages\agentic_workflow\__init__.py                          4      0   100%
-packages\agentic_workflow\mock_executor.py                    68      2    97%
-packages\agentic_workflow\models.py                           82      0   100%
-packages\agentic_workflow\state_machine.py                    80      0   100%
-packages\agentic_workflow\tests\test_agentic_workflow.py     621      0   100%
-------------------------------------------------------------------------------
-TOTAL                                                        855      2    99%
-
-129 passed in 1.24s (99% coverage)
+# Full monorepo suite
+.venv/bin/pytest
 ```

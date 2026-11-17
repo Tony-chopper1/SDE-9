@@ -7,20 +7,31 @@ requiring real filesystem access, file modifications, or external services.
 
 All tools are dispatched through a single :meth:`MockToolExecutor.execute`
 entry-point and return a structured :class:`~packages.agentic_workflow.models.WorkflowResult`.
+
+Week 2 enhancements:
+    * Per-step execution timeouts.
+    * Bounded retries (up to 3 attempts with exponential backoff) for idempotent tools.
+    * Suppression of retries for non-idempotent tools.
+    * Cancellation support (cancel() / reset_cancellation()).
+    * Execution history tracking for zero-tool verification.
 """
 
 from __future__ import annotations
 
 import ast
 import operator
+import threading
 import time
-from typing import Any, Dict, List
+from typing import Any, Collection, Dict, List, Optional
 
 from packages.agentic_workflow.models import (
+    PermissionScope,
     SafetyLevel,
     ToolSpec,
     WorkflowResult,
+    WorkflowStep,
 )
+
 
 # ---------------------------------------------------------------------------
 # Allow-listed Harmless Tool Specifications
@@ -44,6 +55,20 @@ DEFAULT_TOOL_SPECS: List[ToolSpec] = [
         required_parameters=["expression"],
     ),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class ExecutionCancelledError(Exception):
+    """Raised or reported when tool execution is cancelled."""
+
+
+class ToolExecutionTimeoutError(Exception):
+    """Raised or reported when tool execution exceeds its allocated timeout."""
+
 
 # ---------------------------------------------------------------------------
 # Safe math expression evaluator
@@ -115,43 +140,92 @@ class MockToolExecutor:
     Args:
         simulate_failure: When ``True``, every :meth:`execute` call returns a
             simulated failure, allowing callers to test failure-recovery paths.
-
-    Example::
-
-        executor = MockToolExecutor()
-        result = executor.execute("file.search", {"pattern": "*.py", "directory": "/src"})
-        assert result.success is True
-        assert isinstance(result.output["matches"], list)
-        assert result.duration_ms >= 0
+        registry: Optional tool registry instance.
+        default_timeout_seconds: Optional default timeout in seconds.
     """
 
-    def __init__(self, simulate_failure: bool = False) -> None:
+    def __init__(
+        self,
+        simulate_failure: bool = False,
+        registry: Optional[Any] = None,
+        default_timeout_seconds: Optional[float] = None,
+    ) -> None:
         self.simulate_failure = simulate_failure
+        self.registry = registry
+        self.default_timeout_seconds = default_timeout_seconds
         self.specs: Dict[str, ToolSpec] = {spec.name: spec for spec in DEFAULT_TOOL_SPECS}
+        self._cancelled: bool = False
+        self._cancellation_reason: Optional[str] = None
+        self._fail_first_n_attempts: Dict[str, int] = {}
+        self.execution_history: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
-    # Public interface
+    # Public interface & Cancellation Controls
     # ------------------------------------------------------------------
 
     def get_registered_tools(self) -> List[str]:
         """Return list of registered harmless tool names."""
-        return ["file.search", "calc.evaluate"]
+        return list(self.specs.keys())
 
-    def execute(self, tool_name: str, parameters: Dict[str, Any]) -> WorkflowResult:
-        """Execute a named harmless tool with the provided parameters.
+    def cancel(self, reason: str = "Execution cancelled by operator") -> None:
+        """Cancel current and subsequent tool executions."""
+        self._cancelled = True
+        self._cancellation_reason = reason
 
-        Dispatches to the appropriate handler based on *tool_name*.
-        Measures and records wall-clock execution time in milliseconds.
+    def reset_cancellation(self) -> None:
+        """Reset cancellation status to allow new executions."""
+        self._cancelled = False
+        self._cancellation_reason = None
 
-        Args:
-            tool_name: Dot-namespaced tool identifier (e.g. ``"file.search"``).
-            parameters: Keyword arguments consumed by the target tool.
+    @property
+    def is_cancelled(self) -> bool:
+        """Check whether the executor is in a cancelled state."""
+        return self._cancelled
 
-        Returns:
-            A :class:`~packages.agentic_workflow.models.WorkflowResult` with
-            ``success``, ``output``, ``duration_ms``, and optionally ``error``.
-        """
+    def set_fail_first_n_attempts(self, tool_name: str, count: int) -> None:
+        """Helper for testing retries: fail the first N attempts of a tool before succeeding."""
+        self._fail_first_n_attempts[tool_name] = count
+
+    # ------------------------------------------------------------------
+    # Single-Attempt Invocation
+    # ------------------------------------------------------------------
+
+    def _execute_single_attempt(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        timeout_seconds: Optional[float] = None,
+    ) -> WorkflowResult:
+        """Perform a single invocation of *tool_name* without retries."""
         start = time.perf_counter()
+
+        if self.is_cancelled:
+            return WorkflowResult(
+                tool_name=tool_name,
+                success=False,
+                output=None,
+                duration_ms=0.0,
+                error=f"Execution cancelled: {self._cancellation_reason}",
+            )
+
+        # Track that an execution attempt was dispatched
+        self.execution_history.append({
+            "tool_name": tool_name,
+            "parameters": dict(parameters),
+            "timestamp": time.time(),
+        })
+
+        # Check programmed temporary failure count
+        if self._fail_first_n_attempts.get(tool_name, 0) > 0:
+            self._fail_first_n_attempts[tool_name] -= 1
+            duration_ms = (time.perf_counter() - start) * 1000
+            return WorkflowResult(
+                tool_name=tool_name,
+                success=False,
+                output=None,
+                duration_ms=duration_ms,
+                error=f"Transient simulated error for {tool_name}",
+            )
 
         if self.simulate_failure:
             duration_ms = (time.perf_counter() - start) * 1000
@@ -163,24 +237,252 @@ class MockToolExecutor:
                 error="Simulated tool failure (simulate_failure=True)",
             )
 
-        try:
-            output = self._dispatch(tool_name, parameters)
+        # Check timeout configuration
+        effective_timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else parameters.get("timeout_seconds", self.default_timeout_seconds)
+        )
+
+        simulated_delay = parameters.get("simulated_delay", 0.0)
+        result_container: Dict[str, Any] = {}
+        exception_container: Dict[str, Exception] = {}
+
+        def run_target():
+            try:
+                if simulated_delay > 0:
+                    time.sleep(simulated_delay)
+                result_container["output"] = self._dispatch(tool_name, parameters)
+            except Exception as exc:
+                exception_container["error"] = exc
+
+        if effective_timeout is not None and effective_timeout > 0:
+            worker = threading.Thread(target=run_target, daemon=True)
+            worker.start()
+            worker.join(timeout=effective_timeout)
             duration_ms = (time.perf_counter() - start) * 1000
-            return WorkflowResult(
-                tool_name=tool_name,
-                success=True,
-                output=output,
-                duration_ms=duration_ms,
-            )
-        except Exception as exc:
+
+            if worker.is_alive():
+                return WorkflowResult(
+                    tool_name=tool_name,
+                    success=False,
+                    output=None,
+                    duration_ms=duration_ms,
+                    error=f"Tool execution timed out after {effective_timeout}s",
+                )
+        else:
+            run_target()
             duration_ms = (time.perf_counter() - start) * 1000
+
+        if "error" in exception_container:
             return WorkflowResult(
                 tool_name=tool_name,
                 success=False,
                 output=None,
                 duration_ms=duration_ms,
-                error=str(exc),
+                error=str(exception_container["error"]),
             )
+
+        return WorkflowResult(
+            tool_name=tool_name,
+            success=True,
+            output=result_container.get("output"),
+            duration_ms=duration_ms,
+        )
+
+    # ------------------------------------------------------------------
+    # Public execute interface (with Retry & Timeout Logic)
+    # ------------------------------------------------------------------
+
+    def execute(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        timeout_seconds: Optional[float] = None,
+        is_idempotent: Optional[bool] = None,
+        max_retries: int = 1,
+        backoff_base_seconds: float = 0.01,
+        granted_scopes: Optional[Collection[PermissionScope]] = None,
+    ) -> WorkflowResult:
+        """Execute a named harmless tool with retry resilience, timeout, and cancellation guards.
+
+        Args:
+            tool_name: Dot-namespaced tool identifier (e.g. ``"file.search"``).
+            parameters: Key-value dictionary of arguments for the tool.
+            timeout_seconds: Optional timeout in seconds.
+            is_idempotent: Whether this tool invocation is safe to retry.
+            max_retries: Maximum total attempts.
+            backoff_base_seconds: Multiplier for exponential backoff delay.
+            granted_scopes: Optional permission scopes to enforce.
+
+        Returns:
+            A :class:`~packages.agentic_workflow.models.WorkflowResult`.
+        """
+        if self.is_cancelled:
+            return WorkflowResult(
+                tool_name=tool_name,
+                success=False,
+                output=None,
+                duration_ms=0.0,
+                error=f"Execution cancelled: {self._cancellation_reason}",
+            )
+
+        # Enforce permission scopes if registry is available
+        if granted_scopes is not None and self.registry is not None:
+            try:
+                self.registry.enforce_permission(tool_name, granted_scopes)
+            except Exception as err:
+                return WorkflowResult(
+                    tool_name=tool_name,
+                    success=False,
+                    output=None,
+                    duration_ms=0.0,
+                    error=str(err),
+                )
+
+        # Determine idempotency
+        if is_idempotent is None:
+            if tool_name in self.specs:
+                is_idempotent = self.specs[tool_name].is_idempotent
+            elif self.registry is not None and self.registry.is_registered(tool_name):
+                is_idempotent = self.registry.get_spec(tool_name).is_idempotent
+            else:
+                is_idempotent = False
+
+        allowed_attempts = max(1, max_retries) if is_idempotent else 1
+        last_result: Optional[WorkflowResult] = None
+
+        for attempt in range(1, allowed_attempts + 1):
+            if self.is_cancelled:
+                return WorkflowResult(
+                    tool_name=tool_name,
+                    success=False,
+                    output=None,
+                    duration_ms=0.0,
+                    error=f"Execution cancelled: {self._cancellation_reason}",
+                )
+
+            last_result = self._execute_single_attempt(
+                tool_name=tool_name,
+                parameters=parameters,
+                timeout_seconds=timeout_seconds,
+            )
+
+            if last_result.success:
+                return last_result
+
+            # If attempt failed and more attempts remain for idempotent tool, backoff
+            if attempt < allowed_attempts:
+                delay = backoff_base_seconds * (2 ** (attempt - 1))
+                time.sleep(delay)
+
+        return last_result if last_result is not None else WorkflowResult(
+            tool_name=tool_name,
+            success=False,
+            output=None,
+            duration_ms=0.0,
+            error="No execution attempts made.",
+        )
+
+    # ------------------------------------------------------------------
+    # Step Execution Helper
+    # ------------------------------------------------------------------
+
+    def execute_step(
+        self,
+        step: WorkflowStep,
+        granted_scopes: Optional[Collection[PermissionScope]] = None,
+        max_retries: int = 3,
+        backoff_base_seconds: float = 0.01,
+    ) -> WorkflowResult:
+        """Execute a full :class:`WorkflowStep`, recording metadata and lifecycle status."""
+        step.status = "running"
+        step.started_at = time.time()
+        step.execution_logs.append(
+            f"[{step.started_at}] Started execution for step '{step.id}' ({step.tool_name})."
+        )
+
+        effective_idempotent = step.is_idempotent
+        if self.registry is not None and self.registry.is_registered(step.tool_name):
+            effective_idempotent = (
+                step.is_idempotent and self.registry.get_spec(step.tool_name).is_idempotent
+            )
+        elif step.tool_name in self.specs:
+            effective_idempotent = step.is_idempotent and self.specs[step.tool_name].is_idempotent
+
+        allowed_attempts = max(1, max_retries) if effective_idempotent else 1
+        last_result: Optional[WorkflowResult] = None
+
+        for attempt in range(1, allowed_attempts + 1):
+            if self.is_cancelled:
+                step.status = "cancelled"
+                step.error = f"Cancelled: {self._cancellation_reason}"
+                step.completed_at = time.time()
+                step.execution_logs.append(f"[{step.completed_at}] Execution cancelled.")
+                return WorkflowResult(
+                    tool_name=step.tool_name,
+                    success=False,
+                    output=None,
+                    duration_ms=0.0,
+                    error=step.error,
+                )
+
+            # Check parameter validation via registry if present
+            if self.registry is not None and self.registry.is_registered(step.tool_name):
+                try:
+                    self.registry.validate_parameters(step.tool_name, step.parameters)
+                except Exception as param_err:
+                    step.status = "failed"
+                    step.error = str(param_err)
+                    step.completed_at = time.time()
+                    step.execution_logs.append(f"[{step.completed_at}] Parameter validation error: {param_err}")
+                    return WorkflowResult(
+                        tool_name=step.tool_name,
+                        success=False,
+                        output=None,
+                        duration_ms=0.0,
+                        error=step.error,
+                    )
+
+            last_result = self.execute(
+                tool_name=step.tool_name,
+                parameters=step.parameters,
+                timeout_seconds=step.timeout_seconds,
+                is_idempotent=effective_idempotent,
+                max_retries=1,
+                granted_scopes=granted_scopes,
+            )
+
+            if last_result.success:
+                step.status = "completed"
+                step.result = last_result.output
+                step.completed_at = time.time()
+                step.execution_logs.append(
+                    f"[{step.completed_at}] Step completed in {last_result.duration_ms:.2f}ms."
+                )
+                return last_result
+
+            # If attempt failed, update retry count
+            if attempt < allowed_attempts:
+                step.retry_count += 1
+                delay = backoff_base_seconds * (2 ** (attempt - 1))
+                step.execution_logs.append(
+                    f"Attempt {attempt} failed ({last_result.error}). Retrying in {delay:.3f}s..."
+                )
+                time.sleep(delay)
+
+        # All attempts exhausted
+        step.status = "failed"
+        step.error = last_result.error if last_result else "Execution failed."
+        step.completed_at = time.time()
+        step.execution_logs.append(f"[{step.completed_at}] Step failed: {step.error}")
+        return last_result or WorkflowResult(
+            tool_name=step.tool_name,
+            success=False,
+            output=None,
+            duration_ms=0.0,
+            error=step.error,
+        )
 
     # ------------------------------------------------------------------
     # Dispatcher
@@ -206,6 +508,14 @@ class MockToolExecutor:
             "calc_evaluate": self._calc_evaluate,
         }
         if tool_name not in handlers:
+            # If tool is registered in the external registry (permission already enforced by caller),
+            # return a mock success result to simulate delegated execution.
+            if self.registry is not None and self.registry.is_registered(tool_name):
+                return {
+                    "tool": tool_name,
+                    "status": "simulated_success",
+                    "note": "Executed via registry delegation (mock)",
+                }
             raise ValueError(
                 f"Unknown tool '{tool_name}'. "
                 f"Registered tools: ['file.search', 'calc.evaluate']"
