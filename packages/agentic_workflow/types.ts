@@ -2,7 +2,7 @@
  * TypeScript interfaces for the Agentic Workflow & Tool Executor module.
  *
  * Mirrors the Pydantic models defined in `packages/agentic_workflow/models.py`,
- * validator contracts, and approval requests for frontend and API consumer parity.
+ * validator contracts, safe audit trails, and approval requests for frontend and API consumer parity.
  *
  * @module agentic_workflow/types
  */
@@ -54,7 +54,7 @@ export type ApprovalStatus =
   | "EXPIRED";
 
 /**
- * Execution status of an action plan.
+ * Execution status of a workflow plan.
  */
 export type PlanStatus =
   | "PENDING"
@@ -84,7 +84,26 @@ export type StepStatus =
 // ---------------------------------------------------------------------------
 
 /**
- * A single discrete action within an {@link ActionPlan}.
+ * Safe audit event recording human-in-the-loop decisions.
+ * Contains no sensitive arguments or parameters.
+ */
+export interface AuditEvent {
+  /** Identifier of the workflow step associated with the decision (if any). */
+  step_id?: string;
+  /** Decision rendered ('APPROVED' | 'REJECTED' | 'EXPIRED'). */
+  decision: string;
+  /** Optional human- or system-supplied rationale for the decision. */
+  reason?: string;
+  /** Unix timestamp (seconds) when the event occurred. */
+  timestamp: number;
+  /** Optional approval request ID. */
+  request_id?: string;
+  /** Optional plan ID. */
+  plan_id?: string;
+}
+
+/**
+ * A single discrete action within a {@link WorkflowPlan}.
  */
 export interface WorkflowStep {
   /** Unique identifier for this step (UUID string). */
@@ -114,17 +133,17 @@ export interface WorkflowStep {
   /** Ordered list of log entries emitted during execution. */
   execution_logs: string[];
   /** IDs of prerequisite steps that must complete before this step can execute. */
-  depends_on: string[];
+  depends_on?: string[];
   /** Maximum execution duration in seconds before timing out. */
   timeout_seconds?: number;
   /** Whether the tool action is idempotent and safe to retry on failure. */
-  is_idempotent: boolean;
+  is_idempotent?: boolean;
 }
 
 /**
  * An ordered collection of {@link WorkflowStep} objects representing a multi-step goal.
  */
-export interface ActionPlan {
+export interface WorkflowPlan {
   /** Unique plan identifier (UUID string). */
   plan_id: string;
   /** Identifier of the user session that triggered this plan. */
@@ -140,7 +159,7 @@ export interface ActionPlan {
   /** `true` when at least one step is level C or D. */
   requires_approval: boolean;
   /** Current lifecycle status of the overall plan. */
-  status: PlanStatus;
+  status: PlanStatus | string;
   /** Unix timestamp (seconds) of plan creation. */
   created_at: number;
   /** Unix timestamp (seconds) when the plan was approved. */
@@ -151,12 +170,14 @@ export interface ActionPlan {
   rejection_reason?: string;
   /** Top-level log entries for the overall plan lifecycle. */
   execution_logs: string[];
+  /** Safe audit events recorded during decision gates. */
+  audit_trail?: AuditEvent[];
 }
 
 /**
- * Alias for {@link ActionPlan}.
+ * Backward compatibility alias for {@link WorkflowPlan}.
  */
-export type WorkflowPlan = ActionPlan;
+export type ActionPlan = WorkflowPlan;
 
 /**
  * Formal request for human approval before executing sensitive workflow steps.
@@ -171,7 +192,7 @@ export interface ApprovalRequest {
   /** Severity level requiring human sign-off. */
   safety_level: SafetyLevel;
   /** Current status of the request. */
-  status: ApprovalStatus;
+  status: ApprovalStatus | string;
   /** Unix timestamp when this request expires. */
   expires_at?: number;
   /** Unix timestamp when a decision was rendered. */
@@ -182,12 +203,14 @@ export interface ApprovalRequest {
   reason?: string;
   /** Unix timestamp of creation. */
   created_at: number;
+  /** Optional identifier of the specific workflow step requiring approval. */
+  step_id?: string;
 }
 
 /**
  * Result returned by the tool executor after a single tool invocation.
  */
-export interface ToolResult {
+export interface WorkflowResult {
   /** Dot-namespaced tool identifier that was executed. */
   tool_name: string;
   /** `true` if the tool completed without error. */
@@ -203,14 +226,21 @@ export interface ToolResult {
 }
 
 /**
+ * Backward compatibility alias for {@link WorkflowResult}.
+ */
+export type ToolResult = WorkflowResult;
+
+/**
  * Specification defining parameters, permissions, and behavior of a registered tool.
  */
 export interface ToolSpec {
   name: string;
-  permission_scope: PermissionScope;
-  is_idempotent: boolean;
-  safety_level: SafetyLevel;
-  description: string;
+  description?: string;
+  safety_level?: SafetyLevel;
+  is_idempotent?: boolean;
+  permission_scope?: PermissionScope;
+  parameters?: Record<string, unknown>;
+  required_parameters?: string[];
 }
 
 // ---------------------------------------------------------------------------

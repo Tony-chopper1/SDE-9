@@ -2,7 +2,7 @@
 Agentic Workflow & Tool Executor module.
 
 Provides models, finite state machine, DAG dependency validation, allow-listed
-tool registry, approval management, and resilient mock execution for agentic tasks.
+tool registry, approval management, safe audit trails, and resilient mock execution for agentic tasks.
 """
 
 from packages.agentic_workflow.approval import (
@@ -12,6 +12,7 @@ from packages.agentic_workflow.approval import (
     ApprovalNotFoundError,
 )
 from packages.agentic_workflow.mock_executor import (
+    DEFAULT_TOOL_SPECS,
     ExecutionCancelledError,
     MockToolExecutor,
     ToolExecutionTimeoutError,
@@ -21,11 +22,14 @@ from packages.agentic_workflow.models import (
     AgentState,
     ApprovalRequest,
     ApprovalStatus,
+    AuditEvent,
     PermissionScope,
     PlanStatus,
     SafetyLevel,
     ToolResult,
+    ToolSpec,
     WorkflowPlan,
+    WorkflowResult,
     WorkflowStep,
     highest_safety_level,
 )
@@ -34,7 +38,6 @@ from packages.agentic_workflow.registry import (
     ToolNotFoundError,
     ToolParameterError,
     ToolRegistry,
-    ToolSpec,
 )
 from packages.agentic_workflow.state_machine import (
     AgentStateMachine,
@@ -56,9 +59,13 @@ __all__ = [
     "ApprovalStatus",
     "PlanStatus",
     "WorkflowStep",
-    "ActionPlan",
     "WorkflowPlan",
+    "ActionPlan",
+    "ToolSpec",
+    "DEFAULT_TOOL_SPECS",
     "ApprovalRequest",
+    "AuditEvent",
+    "WorkflowResult",
     "ToolResult",
     "highest_safety_level",
     # State Machine
@@ -72,7 +79,6 @@ __all__ = [
     "MissingDependencyError",
     # Tool Registry & Permissions
     "ToolRegistry",
-    "ToolSpec",
     "ToolNotFoundError",
     "ToolParameterError",
     "PermissionDeniedError",
