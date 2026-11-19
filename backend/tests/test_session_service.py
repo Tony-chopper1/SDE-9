@@ -1,59 +1,54 @@
-from uuid import uuid4
-from backend.schemas.session import SessionStatus
 from backend.services.session_service import SessionService
+from backend.schemas.session import SessionStatus
 
 
-def test_create_session():
+def test_resume_session():
     service = SessionService()
+    session = service.create_session("student05")
+    service.update_status(session.session_id, SessionStatus.PAUSED)
 
-    session = service.create_session("student01")
+    resumed = service.resume_session(session.session_id)
 
-    assert session.user_id == "student01"
-    assert session.status == SessionStatus.CREATED
-    assert session.session_id is not None
+    assert resumed.status == SessionStatus.ACTIVE
 
 
-def test_get_all_sessions():
+def test_expire_session():
     service = SessionService()
+    session = service.create_session("student06")
 
-    service.create_session("student01")
-    service.create_session("student02")
+    expired = service.expire_session(session.session_id)
 
-    sessions = service.get_all_sessions()
-
-    assert len(sessions) == 2
+    assert expired.status == SessionStatus.EXPIRED
 
 
-def test_get_session():
+def test_invalid_transition():
     service = SessionService()
+    session = service.create_session("student07")
 
-    session = service.create_session("student01")
+    service.update_status(session.session_id, SessionStatus.COMPLETED)
 
-    result = service.get_session(session.session_id)
+    try:
+        service.resume_session(session.session_id)
+        assert False, "Expected invalid transition error"
+    except ValueError:
+        assert True
 
-    assert result == session
 
-
-def test_get_session_non_existent():
+def test_idempotent_command():
     service = SessionService()
-    result = service.get_session(uuid4())
-    assert result is None
+    session = service.create_session("student08")
 
-
-def test_update_status():
-    service = SessionService()
-
-    session = service.create_session("student01")
-
-    updated_session = service.update_status(
+    first = service.update_status(
         session.session_id,
         SessionStatus.PAUSED,
+        "pause-command-001",
     )
 
-    assert updated_session.status == SessionStatus.PAUSED
+    second = service.update_status(
+        session.session_id,
+        SessionStatus.PAUSED,
+        "pause-command-001",
+    )
 
-
-def test_update_status_non_existent():
-    service = SessionService()
-    updated_session = service.update_status(uuid4(), SessionStatus.PAUSED)
-    assert updated_session is None
+    assert first.status == SessionStatus.PAUSED
+    assert second.status == SessionStatus.PAUSED

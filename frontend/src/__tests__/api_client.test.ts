@@ -151,4 +151,72 @@ describe('TypedVoicebotClient', () => {
       ).rejects.toThrow('Send chat message failed with HTTP 400');
     });
   });
+
+  describe('submitContext()', () => {
+    it('sends POST request to /context with window and query details', async () => {
+      const mockPayload = {
+        success: true,
+        data: {
+          context_id: 'ctx-101',
+          status: 'accepted',
+          relevant_context: 'VS Code editor active with app.py',
+        },
+        timestamp: 1730000000,
+      };
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => mockPayload,
+      } as Response);
+
+      const requestData = {
+        session_id: 'session-xyz-123',
+        application: 'VS Code',
+        active_window: {
+          app_name: 'VS Code',
+          window_title: 'app.py - project',
+          visible_snippet: 'def main(): pass',
+        },
+      };
+
+      const result = await client.submitContext(requestData);
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(`${mockBaseUrl}/context`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestData),
+      });
+      expect(result.success).toBe(true);
+      expect(result.data?.context_id).toBe('ctx-101');
+      expect(result.data?.relevant_context).toContain('VS Code');
+    });
+
+    it('throws error when context submission returns non-200 HTTP status', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      } as Response);
+
+      await expect(
+        client.submitContext({ session_id: 'session-xyz-123' })
+      ).rejects.toThrow('Submit context failed with HTTP 500');
+    });
+
+    it('generates a typed mock context response when requested', () => {
+      const mockResult = client.createMockContextResponse({
+        session_id: 'session-mock-1',
+        application: 'VS Code',
+        active_window: {
+          app_name: 'VS Code',
+          window_title: 'app.py',
+          visible_snippet: 'console.log("hello")',
+        },
+      });
+
+      expect(mockResult.success).toBe(true);
+      expect(mockResult.data?.status).toBe('mock_demo_accepted');
+      expect(mockResult.data?.relevant_context).toContain('console.log');
+    });
+  });
 });

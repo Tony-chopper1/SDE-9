@@ -5,7 +5,8 @@ Owner: Satwik A (feature/audio-vad)
 Provides:
 - BaseVAD: Provider-independent abstract base class.
 - MockVAD: Deterministic, scripted or energy-inferred mock VAD for testing.
-- EnergyVAD: Lightweight, deterministic RMS dBFS energy detector with hangover smoothing and trigger confirmation.
+- EnergyVAD: Lightweight, deterministic RMS dBFS energy detector with configurable
+  thresholds, minimum speech duration, hangover smoothing, and trigger confirmation.
 - SimpleVADDetector: Team starter interface evaluating frames against an RMS amplitude threshold and tracking VADState transitions.
 """
 from __future__ import annotations
@@ -52,19 +53,23 @@ class MockVAD(BaseVAD):
         default_speech: bool = False,
         fixed_confidence: float = 0.95,
         energy_threshold_db: float = -45.0,
+        min_speech_duration_ms: float = 0.0,
     ):
         self.scripted_decisions = list(scripted_decisions) if scripted_decisions is not None else None
         self.default_speech = default_speech
         self.fixed_confidence = fixed_confidence
         self.energy_threshold_db = energy_threshold_db
+        self.min_speech_duration_ms = min_speech_duration_ms
 
         self._frame_index = 0
         self._speech_count = 0
+        self._consecutive_speech_ms = 0.0
 
     def reset(self) -> None:
         """Reset frame counter and speech statistics."""
         self._frame_index = 0
         self._speech_count = 0
+        self._consecutive_speech_ms = 0.0
 
     @property
     def frames_processed(self) -> int:
@@ -82,11 +87,20 @@ class MockVAD(BaseVAD):
 
         if self.scripted_decisions is not None:
             if self._frame_index < len(self.scripted_decisions):
-                is_speech = self.scripted_decisions[self._frame_index]
+                raw_speech = self.scripted_decisions[self._frame_index]
             else:
-                is_speech = self.default_speech
+                raw_speech = self.default_speech
         else:
-            is_speech = energy_db > self.energy_threshold_db
+            raw_speech = energy_db > self.energy_threshold_db
+
+        # Track consecutive duration for minimum speech duration qualification
+        dur_ms = frame.frame_duration_ms
+        if raw_speech:
+            self._consecutive_speech_ms += dur_ms
+            is_speech = (self._consecutive_speech_ms >= self.min_speech_duration_ms)
+        else:
+            self._consecutive_speech_ms = 0.0
+            is_speech = False
 
         if is_speech:
             self._speech_count += 1
@@ -101,6 +115,7 @@ class MockVAD(BaseVAD):
                 "engine": "MockVAD",
                 "frame_index": self._frame_index,
                 "scripted": self.scripted_decisions is not None,
+                "consecutive_speech_ms": self._consecutive_speech_ms,
             },
         )
 
@@ -111,8 +126,10 @@ class EnergyVAD(BaseVAD):
     Operates in the decibels relative to full scale (dBFS) domain:
     - Computes RMS and converts to dBFS from actual 16-bit PCM samples.
     - Configurable speech activation threshold (threshold_db).
-    - Trigger confirmation (trigger_frames): requires N consecutive active frames before transitioning to speech.
-    - Hangover smoothing (hangover_frames): holds speech state for N frames after energy drops to prevent word clipping.
+    - Configurable minimum speech duration (min_speech_duration_ms): speech is only
+      confirmed if active energy lasts at least this duration (filters brief spikes/clicks).
+    - Trigger confirmation (trigger_frames): requires N consecutive active frames.
+    - Hangover smoothing (hangover_frames): holds speech state for N frames after energy drops.
     """
 
     def __init__(
@@ -120,6 +137,7 @@ class EnergyVAD(BaseVAD):
         threshold_db: float = -42.0,
         hangover_frames: int = 3,
         trigger_frames: int = 2,
+        min_speech_duration_ms: float = 0.0,
     ):
         """Initialize EnergyVAD.
 
@@ -127,13 +145,16 @@ class EnergyVAD(BaseVAD):
             threshold_db: Energy in dBFS above which a frame is active (default: -42.0 dBFS).
             hangover_frames: Number of frames to hold speech state after energy drops (default: 3).
             trigger_frames: Number of consecutive active frames required to trigger speech (default: 2).
+            min_speech_duration_ms: Minimum consecutive duration of speech in ms required before confirming speech.
         """
         self.threshold_db = threshold_db
         self.hangover_frames = hangover_frames
         self.trigger_frames = trigger_frames
+        self.min_speech_duration_ms = min_speech_duration_ms
 
         self._is_in_speech = False
         self._consecutive_active_frames = 0
+        self._consecutive_active_ms = 0.0
         self._hangover_counter = 0
         self._total_frames = 0
 
@@ -141,6 +162,7 @@ class EnergyVAD(BaseVAD):
         """Reset internal temporal smoothing state."""
         self._is_in_speech = False
         self._consecutive_active_frames = 0
+        self._consecutive_active_ms = 0.0
         self._hangover_counter = 0
         self._total_frames = 0
 
@@ -150,22 +172,30 @@ class EnergyVAD(BaseVAD):
         return self._is_in_speech
 
     def process_frame(self, frame: AudioFrame) -> VADResult:
-        """Process one audio frame and apply temporal smoothing."""
+        """Process one audio frame and apply temporal smoothing and min duration qualification."""
         if not isinstance(frame, AudioFrame):
             raise VADError(f"Expected AudioFrame instance, got {type(frame).__name__}")
 
         self._total_frames += 1
         energy_db = frame.calculate_dbfs()
         frame_above_threshold = energy_db >= self.threshold_db
+        frame_dur_ms = frame.frame_duration_ms
 
-        # Trigger confirmation logic
+        # Trigger confirmation logic & minimum speech duration
         if frame_above_threshold:
             self._consecutive_active_frames += 1
-            if self._consecutive_active_frames >= self.trigger_frames:
+            self._consecutive_active_ms += frame_dur_ms
+
+            # Both trigger_frames and min_speech_duration_ms must be satisfied
+            duration_satisfied = (self._consecutive_active_ms >= self.min_speech_duration_ms)
+            trigger_satisfied = (self._consecutive_active_frames >= self.trigger_frames)
+
+            if trigger_satisfied and duration_satisfied:
                 self._is_in_speech = True
                 self._hangover_counter = self.hangover_frames
         else:
             self._consecutive_active_frames = 0
+            self._consecutive_active_ms = 0.0
             if self._hangover_counter > 0:
                 self._hangover_counter -= 1
             else:
@@ -187,6 +217,7 @@ class EnergyVAD(BaseVAD):
                 "frame_raw_active": frame_above_threshold,
                 "hangover_remaining": self._hangover_counter,
                 "consecutive_active": self._consecutive_active_frames,
+                "consecutive_active_ms": self._consecutive_active_ms,
                 "total_frames": self._total_frames,
             },
         )
@@ -206,13 +237,20 @@ class SimpleVADDetector:
         - SPEECH_END: Prior in speech, current drops below threshold.
     """
 
-    def __init__(self, energy_threshold: float = 500.0):
+    def __init__(
+        self,
+        energy_threshold: float = 500.0,
+        min_speech_duration_ms: float = 0.0,
+    ):
         self.energy_threshold = energy_threshold
+        self.min_speech_duration_ms = min_speech_duration_ms
         self._in_speech = False
+        self._active_ms = 0.0
 
     def reset(self) -> None:
         """Reset state tracking."""
         self._in_speech = False
+        self._active_ms = 0.0
 
     def evaluate_frame(self, frame: AudioFrame) -> VADEvent:
         """Evaluate an AudioFrame from raw PCM samples and return a VADEvent."""
@@ -223,13 +261,20 @@ class SimpleVADDetector:
         is_above = (rms >= self.energy_threshold)
 
         if is_above:
-            if not self._in_speech:
-                state = VADState.SPEECH_START
-                self._in_speech = True
+            self._active_ms += frame.frame_duration_ms
+            duration_met = (self._active_ms >= self.min_speech_duration_ms)
+
+            if duration_met:
+                if not self._in_speech:
+                    state = VADState.SPEECH_START
+                    self._in_speech = True
+                else:
+                    state = VADState.SPEECH
             else:
-                state = VADState.SPEECH
+                state = VADState.SILENCE
             confidence = min(1.0, max(0.5, 0.5 + ((rms - self.energy_threshold) / (self.energy_threshold * 2 + 1e-5))))
         else:
+            self._active_ms = 0.0
             if self._in_speech:
                 state = VADState.SPEECH_END
                 self._in_speech = False

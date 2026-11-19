@@ -135,7 +135,7 @@ SDK-9/
 | **Chiranthan RK** | Agentic Workflow & Mock Tool Execution | `packages/agentic_workflow/` | `feature/agentic-workflow` |
 | **Apeksha KT** | Backend Gateway, Sessions & Launcher | `backend/` | `feature/backend-fastapi` |
 | **Spoorthi V** | Frontend UI, AppShell & Virtualized Timeline | `frontend/` | `feature/frontend` |
-| **Praveen Kumar** | Context Tracking & Versioned Reasoning | `packages/context_reasoning/` | `feature/context-reasoning` |
+| **Praveen Kumar** | Context Tracking & Versioned Reasoning | `packages/context_reasoning/` | `features/praveen-week1` |
 
 ---
 

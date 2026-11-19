@@ -111,3 +111,61 @@ class VADError(AudioError):
             correlation_id=correlation_id,
             details_redacted=details,
         )
+
+
+class AudioDeviceError(AudioError):
+    """Raised when an audio device operation fails (selection, permission, discovery)."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "AUDIO_DEVICE_ERROR",
+        retryable: bool = False,
+        correlation_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(
+            message_safe_for_user=message,
+            code=code,
+            retryable=retryable,
+            correlation_id=correlation_id,
+            details_redacted=details,
+        )
+
+
+class DevicePermissionError(AudioDeviceError):
+    """Raised when access to an audio capture device is denied or unavailable."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "AUDIO_PERMISSION_DENIED",
+        retryable: bool = False,
+        correlation_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(
+            message=message,
+            code=code,
+            retryable=retryable,
+            correlation_id=correlation_id,
+            details=details,
+        )
+
+
+class DeviceNotFoundError(AudioDeviceError):
+    """Raised when a requested audio device is not found or is unavailable."""
+
+    def __init__(
+        self,
+        message: str,
+        correlation_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(
+            message=message,
+            code="AUDIO_DEVICE_NOT_FOUND",
+            retryable=False,
+            correlation_id=correlation_id,
+            details=details,
+        )

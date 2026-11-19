@@ -306,10 +306,49 @@ def test_error_envelope_compliance():
     assert env["details_redacted"] == {"reason": "unplugged"}
 
 
+def test_audio_format_and_audio_chunk_schemas():
+    """Verify AudioFormat, AudioChunk, and AudioError schemas (CEO requirements)."""
+    from packages.audio import AudioChunk, AudioConfig, AudioError, AudioFormat
+
+    # 1. AudioFormat instantiation and properties
+    fmt = AudioFormat(sample_rate=16000, channels=1, bit_depth=16, format="s16le")
+    assert fmt.sample_rate == 16000
+    assert fmt.channels == 1
+    assert fmt.bit_depth == 16
+    assert fmt.format == "s16le"
+    assert fmt.bytes_per_sample == 2
+    assert AudioFormat.S16LE == "s16le"
+    assert AudioFormat.PCM == "pcm"
+
+    # AudioConfig is a subclass of AudioFormat
+    cfg = AudioConfig(sample_rate=16000, frame_duration_ms=20)
+    assert isinstance(cfg, AudioFormat)
+
+    # 2. AudioChunk instantiation and interoperability with AudioFrame
+    raw_pcm = b"\x00" * 640
+    chunk = AudioChunk(data=raw_pcm, sample_rate=16000, frame_duration_ms=20, chunk_id="chk-001", chunk_index=3)
+    assert isinstance(chunk, AudioFrame)
+    assert chunk.chunk_id == "chk-001"
+    assert chunk.frame_id == "chk-001"
+    assert chunk.chunk_index == 3
+    assert chunk.frame_index == 3
+    assert len(chunk.data) == 640
+
+    # 3. AudioError envelope
+    err = AudioError("Test error", code="AUDIO_TEST_CODE")
+    assert err.code == "AUDIO_TEST_CODE"
+    assert err.to_envelope()["code"] == "AUDIO_TEST_CODE"
+
+
 def test_schemas_compatibility_reexports():
     """Verify packages.audio.schemas cleanly re-exports all canonical models."""
+    from packages.audio import AudioChunk, AudioFormat
+
     assert schemas.AudioConfig is AudioConfig
     assert schemas.AudioFrame is AudioFrame
+    assert schemas.AudioChunk is AudioChunk
+    assert schemas.AudioFormat is AudioFormat
+    assert schemas.AudioError is AudioError
     assert schemas.VADState is VADState
     assert schemas.VADEvent is VADEvent
     assert schemas.VADResult is VADResult

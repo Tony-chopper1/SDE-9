@@ -1,31 +1,37 @@
 """
 Comprehensive unit and integration tests for the Agentic Workflow module.
 
-Coverage targets:
-    * :mod:`packages.agentic_workflow.models` – all model fields and helpers.
-    * :mod:`packages.agentic_workflow.state_machine` – every valid/invalid
-      transition, safety gate, approval/rejection, error handling, and recovery.
-    * :mod:`packages.agentic_workflow.mock_executor` – all registered tools,
-      error paths, unknown tools, and simulated failure mode.
-
-Run with::
-
-    .venv/bin/pytest --cov=packages/agentic_workflow packages/agentic_workflow/tests/ -v
+Covers:
+    * Schemas: :class:`WorkflowPlan`, :class:`WorkflowStep`, :class:`ToolSpec`,
+      :class:`ApprovalRequest`, :class:`WorkflowResult` (and backward compatibility aliases).
+    * State machine: transitions, safety gate, approval, rejection, and error recovery.
+    * Mock tool executor: exactly two harmless mock tools (file.search and calc.evaluate),
+      ensuring consequential tools (e.g. file.move) are rejected.
+    * AST safe arithmetic evaluation.
 """
 
 from __future__ import annotations
 
+import ast
 import time
 from typing import List
 
 import pytest
 
-from packages.agentic_workflow.mock_executor import MockToolExecutor, _safe_eval
+from packages.agentic_workflow.mock_executor import (
+    DEFAULT_TOOL_SPECS,
+    MockToolExecutor,
+    _safe_eval,
+)
 from packages.agentic_workflow.models import (
     ActionPlan,
     AgentState,
+    ApprovalRequest,
     SafetyLevel,
     ToolResult,
+    ToolSpec,
+    WorkflowPlan,
+    WorkflowResult,
     WorkflowStep,
     highest_safety_level,
 )
@@ -34,7 +40,6 @@ from packages.agentic_workflow.state_machine import (
     InvalidTransitionError,
     StateTransitionRecord,
 )
-import ast
 
 # ===========================================================================
 # Helpers
@@ -96,10 +101,76 @@ class TestSafetyLevel:
 class TestAgentState:
     def test_all_states_exist(self):
         expected = {
-            "IDLE", "LISTENING", "PLANNING", "AWAITING_APPROVAL",
-            "EXECUTING", "VERIFYING", "RESPONDING", "ERROR",
+            "IDLE",
+            "LISTENING",
+            "PLANNING",
+            "AWAITING_APPROVAL",
+            "EXECUTING",
+            "VERIFYING",
+            "RESPONDING",
+            "ERROR",
         }
         assert {s.value for s in AgentState} == expected
+
+
+class TestToolSpec:
+    def test_default_tool_spec(self):
+        spec = ToolSpec(
+            name="custom.tool",
+            description="A test tool spec",
+            safety_level=SafetyLevel.A,
+            is_idempotent=True,
+            parameters={"query": "str"},
+            required_parameters=["query"],
+        )
+        assert spec.name == "custom.tool"
+        assert spec.description == "A test tool spec"
+        assert spec.safety_level == SafetyLevel.A
+        assert spec.is_idempotent is True
+        assert spec.required_parameters == ["query"]
+
+    def test_default_specs_registered(self):
+        names = [spec.name for spec in DEFAULT_TOOL_SPECS]
+        assert "file.search" in names
+        assert "calc.evaluate" in names
+        assert "file.move" not in names
+
+
+class TestApprovalRequest:
+    def test_approval_request_defaults(self):
+        req = ApprovalRequest(
+            plan_id="plan-123",
+            session_id="sess-456",
+            safety_level=SafetyLevel.C,
+        )
+        assert len(req.request_id) > 0
+        assert req.plan_id == "plan-123"
+        assert req.session_id == "sess-456"
+        assert req.safety_level == SafetyLevel.C
+        assert req.status == "PENDING"
+        assert req.created_at > 0
+        assert req.expires_at is None
+        assert req.decided_at is None
+        assert req.decided_by is None
+        assert req.reason is None
+
+    def test_approval_request_custom(self):
+        now = time.time()
+        req = ApprovalRequest(
+            request_id="custom-req-id",
+            plan_id="plan-999",
+            session_id="sess-001",
+            safety_level=SafetyLevel.D,
+            status="APPROVED",
+            expires_at=now + 300,
+            decided_at=now,
+            decided_by="admin_user",
+            reason="Approved after security review",
+        )
+        assert req.request_id == "custom-req-id"
+        assert req.status == "APPROVED"
+        assert req.decided_by == "admin_user"
+        assert req.reason == "Approved after security review"
 
 
 class TestWorkflowStep:
@@ -112,22 +183,30 @@ class TestWorkflowStep:
         assert step.started_at is None
         assert step.completed_at is None
         assert step.execution_logs == []
+        assert step.depends_on == []
+        assert step.timeout_seconds is None
+        assert step.is_idempotent is True
         assert len(step.id) > 0  # UUID assigned
 
     def test_custom_fields(self):
         step = WorkflowStep(
             id="custom-id",
             step_number=3,
-            description="Move logs",
-            tool_name="file.move",
-            safety_level=SafetyLevel.D,
-            parameters={"source": "/a", "destination": "/b"},
+            description="Evaluate metrics",
+            tool_name="calc.evaluate",
+            safety_level=SafetyLevel.A,
+            parameters={"expression": "100 * 2"},
             status="running",
             retry_count=2,
+            depends_on=["step-1", "step-2"],
+            timeout_seconds=5.0,
+            is_idempotent=True,
         )
         assert step.id == "custom-id"
         assert step.retry_count == 2
         assert step.status == "running"
+        assert step.depends_on == ["step-1", "step-2"]
+        assert step.timeout_seconds == 5.0
 
     def test_execution_logs_mutable(self):
         step = _make_step()
@@ -135,9 +214,9 @@ class TestWorkflowStep:
         assert len(step.execution_logs) == 1
 
 
-class TestActionPlan:
+class TestWorkflowPlan:
     def test_defaults(self):
-        plan = ActionPlan(session_id="s1", goal="do stuff")
+        plan = WorkflowPlan(session_id="s1", goal="do stuff")
         assert plan.requires_approval is False
         assert plan.steps == []
         assert plan.current_step_index == 0
@@ -150,28 +229,50 @@ class TestActionPlan:
 
     def test_created_at_is_recent(self):
         before = time.time()
-        plan = ActionPlan(session_id="s1", goal="do stuff")
+        plan = WorkflowPlan(session_id="s1", goal="do stuff")
         after = time.time()
         assert before <= plan.created_at <= after
 
+    def test_action_plan_alias_parity(self):
+        assert ActionPlan is WorkflowPlan
+        plan = ActionPlan(session_id="s2", goal="alias check")
+        assert isinstance(plan, WorkflowPlan)
 
-class TestToolResult:
+
+class TestWorkflowResult:
     def test_success_result(self):
-        r = ToolResult(tool_name="file.search", success=True, output=["a.py"], duration_ms=12.5)
+        r = WorkflowResult(
+            tool_name="file.search", success=True, output=["a.py"], duration_ms=12.5
+        )
         assert r.success is True
         assert r.error is None
         assert r.duration_ms == 12.5
 
     def test_failure_result(self):
-        r = ToolResult(tool_name="file.move", success=False, output=None, duration_ms=2.0, error="oops")
+        r = WorkflowResult(
+            tool_name="calc.evaluate",
+            success=False,
+            output=None,
+            duration_ms=2.0,
+            error="syntax error",
+        )
         assert r.success is False
-        assert r.error == "oops"
+        assert r.error == "syntax error"
         assert r.output is None
 
     def test_timestamp_populated(self):
         before = time.time()
-        r = ToolResult(tool_name="calc.evaluate", success=True, output=42, duration_ms=1.0)
+        r = WorkflowResult(
+            tool_name="calc.evaluate", success=True, output=42, duration_ms=1.0
+        )
         assert r.timestamp >= before
+
+    def test_tool_result_alias_parity(self):
+        assert ToolResult is WorkflowResult
+        r = ToolResult(
+            tool_name="calc.evaluate", success=True, output=10, duration_ms=1.0
+        )
+        assert isinstance(r, WorkflowResult)
 
 
 # ===========================================================================
@@ -196,14 +297,17 @@ class TestStateMachineInit:
 class TestValidTransitions:
     """All valid edges in the FSM transition table."""
 
-    @pytest.mark.parametrize("path", [
-        [AgentState.LISTENING],
-        [AgentState.LISTENING, AgentState.PLANNING],
-        [AgentState.LISTENING, AgentState.PLANNING, AgentState.EXECUTING],
-        [AgentState.LISTENING, AgentState.PLANNING, AgentState.AWAITING_APPROVAL],
-        [AgentState.LISTENING, AgentState.IDLE],
-        [AgentState.ERROR],
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            [AgentState.LISTENING],
+            [AgentState.LISTENING, AgentState.PLANNING],
+            [AgentState.LISTENING, AgentState.PLANNING, AgentState.EXECUTING],
+            [AgentState.LISTENING, AgentState.PLANNING, AgentState.AWAITING_APPROVAL],
+            [AgentState.LISTENING, AgentState.IDLE],
+            [AgentState.ERROR],
+        ],
+    )
     def test_valid_path_from_idle(self, path: List[AgentState]):
         sm = AgentStateMachine()
         for state in path:
@@ -253,26 +357,30 @@ class TestValidTransitions:
 class TestInvalidTransitions:
     """Guards against edges absent from the FSM transition table."""
 
-    @pytest.mark.parametrize("from_state,to_state", [
-        (AgentState.IDLE, AgentState.PLANNING),
-        (AgentState.IDLE, AgentState.EXECUTING),
-        (AgentState.IDLE, AgentState.AWAITING_APPROVAL),
-        (AgentState.LISTENING, AgentState.EXECUTING),
-        (AgentState.LISTENING, AgentState.AWAITING_APPROVAL),
-        (AgentState.PLANNING, AgentState.IDLE),
-        (AgentState.PLANNING, AgentState.RESPONDING),
-        (AgentState.AWAITING_APPROVAL, AgentState.PLANNING),
-        (AgentState.AWAITING_APPROVAL, AgentState.VERIFYING),
-        (AgentState.EXECUTING, AgentState.IDLE),
-        (AgentState.EXECUTING, AgentState.PLANNING),
-        (AgentState.VERIFYING, AgentState.IDLE),
-        (AgentState.RESPONDING, AgentState.PLANNING),
-        (AgentState.ERROR, AgentState.PLANNING),
-        (AgentState.ERROR, AgentState.EXECUTING),
-    ])
-    def test_invalid_transition_raises(self, from_state: AgentState, to_state: AgentState):
+    @pytest.mark.parametrize(
+        "from_state,to_state",
+        [
+            (AgentState.IDLE, AgentState.PLANNING),
+            (AgentState.IDLE, AgentState.EXECUTING),
+            (AgentState.IDLE, AgentState.AWAITING_APPROVAL),
+            (AgentState.LISTENING, AgentState.EXECUTING),
+            (AgentState.LISTENING, AgentState.AWAITING_APPROVAL),
+            (AgentState.PLANNING, AgentState.IDLE),
+            (AgentState.PLANNING, AgentState.RESPONDING),
+            (AgentState.AWAITING_APPROVAL, AgentState.PLANNING),
+            (AgentState.AWAITING_APPROVAL, AgentState.VERIFYING),
+            (AgentState.EXECUTING, AgentState.IDLE),
+            (AgentState.EXECUTING, AgentState.PLANNING),
+            (AgentState.VERIFYING, AgentState.IDLE),
+            (AgentState.RESPONDING, AgentState.PLANNING),
+            (AgentState.ERROR, AgentState.PLANNING),
+            (AgentState.ERROR, AgentState.EXECUTING),
+        ],
+    )
+    def test_invalid_transition_raises(
+        self, from_state: AgentState, to_state: AgentState
+    ):
         sm = AgentStateMachine()
-        # Navigate to from_state
         _navigate_to(sm, from_state)
         with pytest.raises(InvalidTransitionError):
             sm.transition_to(to_state)
@@ -285,17 +393,27 @@ def _navigate_to(sm: AgentStateMachine, target: AgentState) -> None:
         AgentState.LISTENING: [AgentState.LISTENING],
         AgentState.PLANNING: [AgentState.LISTENING, AgentState.PLANNING],
         AgentState.AWAITING_APPROVAL: [
-            AgentState.LISTENING, AgentState.PLANNING, AgentState.AWAITING_APPROVAL
+            AgentState.LISTENING,
+            AgentState.PLANNING,
+            AgentState.AWAITING_APPROVAL,
         ],
         AgentState.EXECUTING: [
-            AgentState.LISTENING, AgentState.PLANNING, AgentState.EXECUTING
+            AgentState.LISTENING,
+            AgentState.PLANNING,
+            AgentState.EXECUTING,
         ],
         AgentState.VERIFYING: [
-            AgentState.LISTENING, AgentState.PLANNING, AgentState.EXECUTING, AgentState.VERIFYING
+            AgentState.LISTENING,
+            AgentState.PLANNING,
+            AgentState.EXECUTING,
+            AgentState.VERIFYING,
         ],
         AgentState.RESPONDING: [
-            AgentState.LISTENING, AgentState.PLANNING, AgentState.EXECUTING,
-            AgentState.VERIFYING, AgentState.RESPONDING,
+            AgentState.LISTENING,
+            AgentState.PLANNING,
+            AgentState.EXECUTING,
+            AgentState.VERIFYING,
+            AgentState.RESPONDING,
         ],
         AgentState.ERROR: [AgentState.ERROR],
     }
@@ -382,7 +500,7 @@ class TestBuildPlanSafetyGate:
 
     def test_level_c_requires_approval(self):
         sm = _sm_in_planning()
-        steps = [_make_step(safety_level=SafetyLevel.C)]
+        steps = [_make_step(safety_level=SafetyLevel.C, tool_name="sensitive.op")]
         plan = sm.build_plan("s1", "Edit config", steps)
         assert sm.state == AgentState.AWAITING_APPROVAL
         assert plan.requires_approval is True
@@ -390,8 +508,8 @@ class TestBuildPlanSafetyGate:
 
     def test_level_d_requires_approval(self):
         sm = _sm_in_planning()
-        steps = [_make_step(safety_level=SafetyLevel.D)]
-        plan = sm.build_plan("s1", "Delete files", steps)
+        steps = [_make_step(safety_level=SafetyLevel.D, tool_name="destructive.op")]
+        plan = sm.build_plan("s1", "High risk action", steps)
         assert sm.state == AgentState.AWAITING_APPROVAL
         assert plan.requires_approval is True
         assert plan.overall_safety_level == SafetyLevel.D
@@ -413,7 +531,7 @@ class TestBuildPlanSafetyGate:
             _make_step(safety_level=SafetyLevel.C, step_number=1),
             _make_step(safety_level=SafetyLevel.D, step_number=2),
         ]
-        plan = sm.build_plan("s1", "Destroy everything", steps)
+        plan = sm.build_plan("s1", "High risk plan", steps)
         assert plan.overall_safety_level == SafetyLevel.D
 
     def test_plan_stored_on_state_machine(self):
@@ -436,7 +554,6 @@ class TestBuildPlanSafetyGate:
         assert plan.goal == "My goal"
 
     def test_build_plan_with_empty_steps(self):
-        """Empty step list should default to SafetyLevel A and proceed to EXECUTING."""
         sm = _sm_in_planning()
         plan = sm.build_plan("s1", "empty plan", [])
         assert plan.requires_approval is False
@@ -451,7 +568,7 @@ class TestBuildPlanSafetyGate:
 class TestApprovePlan:
     def test_approve_transitions_to_executing(self):
         sm = _sm_in_planning()
-        sm.build_plan("s1", "Delete files", [_make_step(safety_level=SafetyLevel.D)])
+        sm.build_plan("s1", "Sensitive", [_make_step(safety_level=SafetyLevel.D)])
         plan = sm.approve_plan()
         assert sm.state == AgentState.EXECUTING
         assert plan.approved_at is not None
@@ -486,13 +603,13 @@ class TestApprovePlan:
 class TestRejectPlan:
     def test_reject_transitions_to_idle(self):
         sm = _sm_in_planning()
-        sm.build_plan("s1", "Delete files", [_make_step(safety_level=SafetyLevel.D)])
+        sm.build_plan("s1", "Sensitive", [_make_step(safety_level=SafetyLevel.D)])
         sm.reject_plan("Too risky")
         assert sm.state == AgentState.IDLE
 
     def test_reject_sets_timestamps_and_reason(self):
         sm = _sm_in_planning()
-        sm.build_plan("s1", "Delete", [_make_step(safety_level=SafetyLevel.C)])
+        sm.build_plan("s1", "Sensitive", [_make_step(safety_level=SafetyLevel.C)])
         before = time.time()
         rejected = sm.reject_plan("Not now")
         assert rejected.rejected_at >= before
@@ -510,7 +627,7 @@ class TestRejectPlan:
 
     def test_reject_clears_current_plan(self):
         sm = _sm_in_planning()
-        sm.build_plan("s1", "Delete", [_make_step(safety_level=SafetyLevel.C)])
+        sm.build_plan("s1", "Sensitive", [_make_step(safety_level=SafetyLevel.C)])
         sm.reject_plan("No")
         assert sm.current_plan is None
 
@@ -592,14 +709,30 @@ class TestErrorHandling:
         assert sm.state == AgentState.ERROR
         sm.reset()
         assert sm.state == AgentState.IDLE
-        # Should be able to restart
         sm.transition_to(AgentState.LISTENING)
         assert sm.state == AgentState.LISTENING
 
 
 # ===========================================================================
-# MockToolExecutor Tests
+# MockToolExecutor Tests (Harmless Tools Only)
 # ===========================================================================
+
+
+class TestHarmlessToolsRegistry:
+    def test_exactly_two_harmless_tools_registered(self):
+        ex = MockToolExecutor()
+        tools = ex.get_registered_tools()
+        assert len(tools) == 2
+        assert "file.search" in tools
+        assert "calc.evaluate" in tools
+        assert "file.move" not in tools
+
+    def test_consequential_file_move_is_rejected(self):
+        ex = MockToolExecutor()
+        result = ex.execute("file.move", {"source": "/a", "destination": "/b"})
+        assert result.success is False
+        assert "Unknown tool" in result.error
+        assert "file.move" in result.error
 
 
 class TestFileSearch:
@@ -609,6 +742,12 @@ class TestFileSearch:
         assert result.success is True
         assert result.tool_name == "file.search"
         assert result.error is None
+
+    def test_supports_underscore_alias(self):
+        ex = MockToolExecutor()
+        result = ex.execute("file_search", {"pattern": "*.md"})
+        assert result.success is True
+        assert len(result.output["matches"]) > 0
 
     def test_returns_list_of_matches(self):
         ex = MockToolExecutor()
@@ -630,7 +769,9 @@ class TestFileSearch:
 
     def test_max_results_respected(self):
         ex = MockToolExecutor()
-        result = ex.execute("file.search", {"pattern": "*.log", "directory": "/var", "max_results": 2})
+        result = ex.execute(
+            "file.search", {"pattern": "*.log", "directory": "/var", "max_results": 2}
+        )
         assert result.output["total_found"] <= 2
         assert len(result.output["matches"]) <= 2
 
@@ -645,70 +786,33 @@ class TestFileSearch:
         assert result.duration_ms >= 0
 
 
-class TestFileMove:
-    def test_valid_move_returns_success(self):
-        ex = MockToolExecutor()
-        result = ex.execute("file.move", {"source": "/tmp/a.txt", "destination": "/home/b.txt"})
-        assert result.success is True
-        assert result.output["status"] == "moved"
-        assert result.output["source"] == "/tmp/a.txt"
-        assert result.output["destination"] == "/home/b.txt"
-
-    def test_move_with_overwrite_flag(self):
-        ex = MockToolExecutor()
-        result = ex.execute("file.move", {
-            "source": "/a/file.txt",
-            "destination": "/b/file.txt",
-            "overwrite": True,
-        })
-        assert result.output["overwrite"] is True
-
-    def test_missing_source_returns_error(self):
-        ex = MockToolExecutor()
-        result = ex.execute("file.move", {"destination": "/b.txt"})
-        assert result.success is False
-        assert "source" in result.error.lower()
-
-    def test_missing_destination_returns_error(self):
-        ex = MockToolExecutor()
-        result = ex.execute("file.move", {"source": "/a.txt"})
-        assert result.success is False
-        assert "destination" in result.error.lower()
-
-    def test_empty_source_returns_error(self):
-        ex = MockToolExecutor()
-        result = ex.execute("file.move", {"source": "", "destination": "/b.txt"})
-        assert result.success is False
-
-    def test_empty_destination_returns_error(self):
-        ex = MockToolExecutor()
-        result = ex.execute("file.move", {"source": "/a.txt", "destination": ""})
-        assert result.success is False
-
-    def test_duration_ms_non_negative(self):
-        ex = MockToolExecutor()
-        result = ex.execute("file.move", {"source": "/a.txt", "destination": "/b.txt"})
-        assert result.duration_ms >= 0
-
-
 class TestCalcEvaluate:
-    @pytest.mark.parametrize("expression,expected", [
-        ("2 + 3", 5.0),
-        ("10 - 4", 6.0),
-        ("3 * 4", 12.0),
-        ("10 / 4", 2.5),
-        ("2 ** 3", 8.0),
-        ("10 % 3", 1.0),
-        ("10 // 3", 3.0),
-        ("-5 + 10", 5.0),
-        ("(2 + 3) * 4", 20.0),
-    ])
+    @pytest.mark.parametrize(
+        "expression,expected",
+        [
+            ("2 + 3", 5.0),
+            ("10 - 4", 6.0),
+            ("3 * 4", 12.0),
+            ("10 / 4", 2.5),
+            ("2 ** 3", 8.0),
+            ("10 % 3", 1.0),
+            ("10 // 3", 3.0),
+            ("-5 + 10", 5.0),
+            ("(2 + 3) * 4", 20.0),
+        ],
+    )
     def test_valid_expressions(self, expression: str, expected: float):
         ex = MockToolExecutor()
         result = ex.execute("calc.evaluate", {"expression": expression})
         assert result.success is True
         assert result.output["result"] == pytest.approx(expected)
         assert result.output["expression"] == expression
+
+    def test_supports_underscore_alias(self):
+        ex = MockToolExecutor()
+        result = ex.execute("calc_evaluate", {"expression": "6 * 7"})
+        assert result.success is True
+        assert result.output["result"] == 42.0
 
     def test_empty_expression_returns_error(self):
         ex = MockToolExecutor()
@@ -750,11 +854,11 @@ class TestUnknownTool:
         assert "banana.peel" in result.error
         assert result.tool_name == "banana.peel"
 
-    def test_unknown_tool_error_mentions_registered_tools(self):
+    def test_unknown_tool_error_mentions_registered_harmless_tools(self):
         ex = MockToolExecutor()
         result = ex.execute("nonexistent.tool", {})
-        # Error should hint at what's available
-        assert "file.search" in result.error or "registered" in result.error.lower()
+        assert "file.search" in result.error
+        assert "calc.evaluate" in result.error
 
     def test_unknown_tool_duration_recorded(self):
         ex = MockToolExecutor()
@@ -769,16 +873,16 @@ class TestSimulateFailureMode:
         assert result.success is False
         assert "simulated" in result.error.lower()
 
-    def test_simulate_failure_on_all_tools(self):
+    def test_simulate_failure_on_all_harmless_tools(self):
         ex = MockToolExecutor(simulate_failure=True)
-        for tool in ("file.search", "file.move", "calc.evaluate"):
-            result = ex.execute(tool, {"expression": "1", "source": "/a", "destination": "/b", "pattern": "*"})
+        for tool in ("file.search", "calc.evaluate"):
+            result = ex.execute(tool, {"expression": "1", "pattern": "*"})
             assert result.success is False
 
     def test_simulate_failure_returns_tool_name(self):
         ex = MockToolExecutor(simulate_failure=True)
-        result = ex.execute("file.move", {"source": "/a", "destination": "/b"})
-        assert result.tool_name == "file.move"
+        result = ex.execute("calc.evaluate", {"expression": "1 + 1"})
+        assert result.tool_name == "calc.evaluate"
 
     def test_simulate_failure_output_is_none(self):
         ex = MockToolExecutor(simulate_failure=True)
@@ -797,7 +901,7 @@ class TestSimulateFailureMode:
 
 
 class TestIntegrationWorkflow:
-    """End-to-end scenarios combining state machine and tool executor."""
+    """End-to-end scenarios combining state machine and harmless tool executor."""
 
     def test_safe_plan_executes_tool_and_completes(self):
         sm = AgentStateMachine()
@@ -811,14 +915,16 @@ class TestIntegrationWorkflow:
             )
         ]
         plan = sm.build_plan("session-42", "Find log files", steps)
+        assert isinstance(plan, WorkflowPlan)
         assert sm.state == AgentState.EXECUTING
 
         executor = MockToolExecutor()
         for step in plan.steps:
             result = executor.execute(step.tool_name, step.parameters)
+            assert isinstance(result, WorkflowResult)
             step.status = "completed" if result.success else "failed"
             step.result = result.output
-        
+
         sm.transition_to(AgentState.VERIFYING)
         sm.transition_to(AgentState.RESPONDING)
         sm.transition_to(AgentState.IDLE)
@@ -832,9 +938,14 @@ class TestIntegrationWorkflow:
         sm.transition_to(AgentState.PLANNING)
         plan = sm.build_plan(
             "session-99",
-            "Delete old logs",
-            [_make_step(tool_name="file.move", safety_level=SafetyLevel.D,
-                        parameters={"source": "/logs/old.log", "destination": "/archive/old.log"})],
+            "Calculate financial totals",
+            [
+                _make_step(
+                    tool_name="calc.evaluate",
+                    safety_level=SafetyLevel.C,
+                    parameters={"expression": "1500 * 1.18"},
+                )
+            ],
         )
         assert sm.state == AgentState.AWAITING_APPROVAL
 
@@ -858,7 +969,7 @@ class TestIntegrationWorkflow:
         sm.transition_to(AgentState.PLANNING)
         sm.build_plan(
             "session-7",
-            "Wipe database",
+            "High risk evaluation",
             [_make_step(safety_level=SafetyLevel.D)],
         )
         rejected = sm.reject_plan("Security policy violation")
@@ -869,14 +980,21 @@ class TestIntegrationWorkflow:
         sm = AgentStateMachine()
         sm.transition_to(AgentState.LISTENING)
         sm.transition_to(AgentState.PLANNING)
-        plan = sm.build_plan("session-5", "Move files", [
-            _make_step(tool_name="file.move", safety_level=SafetyLevel.B,
-                       parameters={"source": "/a.txt", "destination": "/b.txt"})
-        ])
+        plan = sm.build_plan(
+            "session-5",
+            "Evaluate stats",
+            [
+                _make_step(
+                    tool_name="calc.evaluate",
+                    safety_level=SafetyLevel.B,
+                    parameters={"expression": "1 / 0"},
+                )
+            ],
+        )
         assert sm.state == AgentState.EXECUTING
 
-        executor = MockToolExecutor(simulate_failure=True)
-        result = executor.execute("file.move", plan.steps[0].parameters)
+        executor = MockToolExecutor()
+        result = executor.execute(plan.steps[0].tool_name, plan.steps[0].parameters)
         assert result.success is False
 
         sm.handle_error(result.error)
@@ -890,8 +1008,13 @@ class TestIntegrationWorkflow:
         plan = sm.build_plan(
             "math-session",
             "Compute price",
-            [_make_step(tool_name="calc.evaluate", safety_level=SafetyLevel.A,
-                        parameters={"expression": "100 * 0.85"})],
+            [
+                _make_step(
+                    tool_name="calc.evaluate",
+                    safety_level=SafetyLevel.A,
+                    parameters={"expression": "100 * 0.85"},
+                )
+            ],
         )
         executor = MockToolExecutor()
         result = executor.execute(plan.steps[0].tool_name, plan.steps[0].parameters)
@@ -914,13 +1037,11 @@ class TestSafeEval:
         assert _safe_eval(node) == pytest.approx(3.14)
 
     def test_unsupported_constant_raises(self):
-        # String constant
         node = ast.parse("'hello'", mode="eval").body
         with pytest.raises(ValueError):
             _safe_eval(node)
 
     def test_unsupported_node_raises(self):
-        # Name node (variable) is not supported
         node = ast.parse("x", mode="eval").body
         with pytest.raises(ValueError):
             _safe_eval(node)

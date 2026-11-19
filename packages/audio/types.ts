@@ -82,14 +82,14 @@ export type VADState = (typeof VADState)[keyof typeof VADState];
 export type VADStateString = VADState;
 
 // ============================================================================
-// Audio Configuration Schema
+// Audio Format & Configuration Schemas
 // ============================================================================
 
 /**
- * Configuration schema for audio capture and streaming.
- * Matches Python packages.audio.models.AudioConfig.
+ * Format specification schema for audio capture and streaming.
+ * Matches Python packages.audio.models.AudioFormat.
  */
-export interface AudioConfig {
+export interface AudioFormat {
   /** Sampling frequency in Hz (default: 16000). Supported: 8000..48000 */
   sample_rate: number;
 
@@ -101,7 +101,14 @@ export interface AudioConfig {
 
   /** Audio encoding format (default: 's16le' - signed 16-bit little-endian PCM) */
   format: string;
+}
 
+/**
+ * Configuration schema for audio capture and streaming.
+ * Extends AudioFormat with discrete frame duration settings.
+ * Matches Python packages.audio.models.AudioConfig.
+ */
+export interface AudioConfig extends AudioFormat {
   /**
    * Discrete frame duration in milliseconds.
    * - 30ms (default): Approved team baseline (960 bytes at 16kHz mono).
@@ -111,7 +118,7 @@ export interface AudioConfig {
 }
 
 // ============================================================================
-// Audio Frame Schema
+// Audio Frame & Chunk Schemas
 // ============================================================================
 
 /**
@@ -167,6 +174,18 @@ export interface AudioFrame {
 
   /** ISO 8601 UTC wall-clock timestamp string for logging/auditability. */
   timestamp_utc?: string;
+}
+
+/**
+ * Discrete audio chunk produced by the audio module.
+ * Extends AudioFrame, providing chunk-specific aliases.
+ * Matches Python packages.audio.models.AudioChunk.
+ */
+export interface AudioChunk extends AudioFrame {
+  /** Identifier for this audio chunk (alias for frame_id). */
+  chunk_id?: string;
+  /** Monotonic chunk index (alias for frame_index). */
+  chunk_index?: number;
 }
 
 // ============================================================================

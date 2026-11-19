@@ -14,12 +14,13 @@ End-of-stream behavior:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
 import math
+import random
 import struct
 import time
 from typing import Iterator, List, Optional, Tuple
-import uuid
 
 from packages.audio.exceptions import AudioSourceError
 from packages.audio.models import AudioConfig, AudioFrame
@@ -81,6 +82,8 @@ class MockMicrophoneSource(AudioSource):
     """
 
     SUPPORTED_PATTERNS = {"speech", "silence", "alternating", "custom"}
+    DEFAULT_SEED: int = 42
+    DEFAULT_START_TIMESTAMP: float = 1793491200.0  # 2026-11-01T00:00:00.000000+00:00 UTC
 
     def __init__(
         self,
@@ -91,6 +94,8 @@ class MockMicrophoneSource(AudioSource):
         max_frames: Optional[int] = None,
         real_time: bool = False,
         speech_frequency_hz: float = 300.0,
+        seed: Optional[int] = 42,
+        start_timestamp: Optional[float] = 1793491200.0,
     ):
         """Initialize the mock microphone.
 
@@ -102,6 +107,8 @@ class MockMicrophoneSource(AudioSource):
             max_frames: Max frame count before EOF.
             real_time: If True, sleeps for frame duration between reads to mimic live mic.
             speech_frequency_hz: Base carrier frequency for synthesized speech tone.
+            seed: Seed for deterministic frame IDs and reproducible PRNG state (default: 42).
+            start_timestamp: Epoch timestamp for frame 0 (default: 1793491200.0, 2026-11-01T00:00:00 UTC).
         """
         self.config = config or AudioConfig()
         if pattern not in self.SUPPORTED_PATTERNS:
@@ -113,6 +120,13 @@ class MockMicrophoneSource(AudioSource):
         self.custom_timeline = custom_timeline or []
         self.real_time = real_time
         self.speech_frequency_hz = speech_frequency_hz
+        self.seed = self.DEFAULT_SEED if seed is None else seed
+        self.start_timestamp = (
+            self.DEFAULT_START_TIMESTAMP if start_timestamp is None else start_timestamp
+        )
+        # Seeded PRNG instance initialized for reproducible operations/extensions,
+        # while PCM waveform generation uses deterministic mathematical formulas.
+        self._rng = random.Random(self.seed)
 
         if duration_seconds is not None:
             frames_from_duration = int((duration_seconds * 1000) / self.config.frame_duration_ms)
@@ -140,6 +154,7 @@ class MockMicrophoneSource(AudioSource):
         self.is_streaming = True
         self._sequence_counter = 0
         self._sample_index = 0
+        self._rng = random.Random(self.seed)
         self._last_read_time = time.perf_counter()
 
     def close(self) -> None:
@@ -210,6 +225,39 @@ class MockMicrophoneSource(AudioSource):
         self._sample_index += sample_count
         return struct.pack(f"<{len(samples)}h", *samples)
 
+    def _create_frame(self, pcm_bytes: bytes, is_speech: bool) -> AudioFrame:
+        """Construct a deterministic AudioFrame with seed-derived metadata."""
+        elapsed_ms = float(self._sequence_counter * self.config.frame_duration_ms)
+        frame_offset_sec = elapsed_ms / 1000.0
+        frame_ts = self.start_timestamp + frame_offset_sec
+
+        # Deterministic ISO 8601 UTC timestamp calculated from start_timestamp and frame sequence
+        dt_utc = datetime.fromtimestamp(self.start_timestamp, tz=timezone.utc) + timedelta(seconds=frame_offset_sec)
+        frame_utc = dt_utc.isoformat()
+
+        # Deterministic frame identifier based on seed and sequence counter
+        frame_hash = hashlib.sha256(
+            f"{self.seed}:{self._sequence_counter}".encode("utf-8")
+        ).hexdigest()[:10]
+        frame_id = f"frame-{frame_hash}"
+
+        frame = AudioFrame(
+            data=pcm_bytes,
+            timestamp=frame_ts,
+            sample_rate=self.config.sample_rate,
+            channels=self.config.channels,
+            format=self.config.format,
+            frame_duration_ms=self.config.frame_duration_ms,
+            frame_index=self._sequence_counter,
+            sequence_number=self._sequence_counter,
+            timestamp_ms=elapsed_ms,
+            is_speech=is_speech,
+            frame_id=frame_id,
+            timestamp_utc=frame_utc,
+        )
+        self._sequence_counter += 1
+        return frame
+
     def generate_synthetic_frame(self, is_speech: bool = False) -> AudioFrame:
         """Team interface: Produce a single synthetic AudioFrame (silent or simulated speech).
 
@@ -221,23 +269,7 @@ class MockMicrophoneSource(AudioSource):
 
         sample_count = self.config.samples_per_frame
         pcm_bytes = self._generate_pcm_samples(is_speech, sample_count)
-        elapsed_ms = float(self._sequence_counter * self.config.frame_duration_ms)
-
-        frame = AudioFrame(
-            data=pcm_bytes,
-            sample_rate=self.config.sample_rate,
-            channels=self.config.channels,
-            format=self.config.format,
-            frame_duration_ms=self.config.frame_duration_ms,
-            frame_index=self._sequence_counter,
-            sequence_number=self._sequence_counter,
-            timestamp_ms=elapsed_ms,
-            is_speech=is_speech,
-            frame_id=f"frame-{uuid.uuid4().hex[:10]}",
-            timestamp_utc=datetime.now(timezone.utc).isoformat(),
-        )
-        self._sequence_counter += 1
-        return frame
+        return self._create_frame(pcm_bytes, is_speech)
 
     def read_frame(self) -> Optional[AudioFrame]:
         """Produce the next deterministic audio frame.
@@ -265,23 +297,7 @@ class MockMicrophoneSource(AudioSource):
         is_speech = self._should_generate_speech_at(elapsed_ms)
         sample_count = self.config.samples_per_frame
         pcm_bytes = self._generate_pcm_samples(is_speech, sample_count)
-
-        frame = AudioFrame(
-            data=pcm_bytes,
-            sample_rate=self.config.sample_rate,
-            channels=self.config.channels,
-            format=self.config.format,
-            frame_duration_ms=self.config.frame_duration_ms,
-            frame_index=self._sequence_counter,
-            sequence_number=self._sequence_counter,
-            timestamp_ms=elapsed_ms,
-            is_speech=is_speech,
-            frame_id=f"frame-{uuid.uuid4().hex[:10]}",
-            timestamp_utc=datetime.now(timezone.utc).isoformat(),
-        )
-
-        self._sequence_counter += 1
-        return frame
+        return self._create_frame(pcm_bytes, is_speech)
 
 
 # Backward-compatible alias

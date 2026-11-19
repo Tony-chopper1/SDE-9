@@ -1,4 +1,4 @@
-"""
+﻿"""
 Finite state machine for the Agentic Workflow module.
 
 Manages the full lifecycle of an agent session: state transitions with
@@ -109,7 +109,7 @@ class AgentStateMachine:
 
     def __init__(self) -> None:
         self.state: AgentState = AgentState.IDLE
-        self.current_plan: Optional[ActionPlan] = None
+        self.current_plan: Optional[WorkflowPlan] = None
         self.error_context: Optional[Dict] = None
         self.transition_history: List[StateTransitionRecord] = []
 
@@ -152,8 +152,8 @@ class AgentStateMachine:
         goal: str,
         steps: List[WorkflowStep],
         validate: bool = True,
-    ) -> ActionPlan:
-        """Construct an :class:`ActionPlan` and apply the safety gate.
+    ) -> WorkflowPlan:
+        """Construct a :class:`WorkflowPlan` and apply the safety gate.
 
         If *validate* is True, runs :class:`PlanValidator` to check for
         missing dependencies and circular dependency cycles.
@@ -165,7 +165,7 @@ class AgentStateMachine:
             validate: Whether to validate DAG dependencies (default: True).
 
         Returns:
-            Constructed and validated :class:`ActionPlan`.
+            Constructed and validated :class:`WorkflowPlan`.
 
         Raises:
             InvalidTransitionError: If not in PLANNING state.
@@ -184,7 +184,7 @@ class AgentStateMachine:
         overall = highest_safety_level(safety_levels)
         needs_approval = overall in (SafetyLevel.C, SafetyLevel.D)
 
-        plan = ActionPlan(
+        plan = WorkflowPlan(
             plan_id=str(uuid.uuid4()),
             session_id=session_id,
             goal=goal,
@@ -212,7 +212,7 @@ class AgentStateMachine:
     # Approval Handling
     # ------------------------------------------------------------------
 
-    def approve_plan(self) -> ActionPlan:
+    def approve_plan(self) -> WorkflowPlan:
         """Approve the pending plan and transition to ``EXECUTING``."""
         if self.state != AgentState.AWAITING_APPROVAL:
             raise InvalidTransitionError(
@@ -244,7 +244,7 @@ class AgentStateMachine:
         )
         return self.current_plan
 
-    def reject_plan(self, reason: str) -> ActionPlan:
+    def reject_plan(self, reason: str) -> WorkflowPlan:
         """Reject the pending plan, mark steps as rejected, and return to ``IDLE``."""
         if self.state != AgentState.AWAITING_APPROVAL:
             raise InvalidTransitionError(
@@ -294,7 +294,7 @@ class AgentStateMachine:
         executor: Optional[Any] = None,
         granted_scopes: Optional[Collection[PermissionScope]] = None,
         approval_manager: Optional[Any] = None,
-    ) -> ActionPlan:
+    ) -> WorkflowPlan:
         """Execute the active plan's steps in prerequisite DAG topological order.
 
         Transitions:
@@ -307,7 +307,7 @@ class AgentStateMachine:
             approval_manager: Optional :class:`ApprovalManager` to verify approval gate.
 
         Returns:
-            The executed :class:`ActionPlan`.
+            The executed :class:`WorkflowPlan`.
 
         Raises:
             RuntimeError: If there is no current plan.
@@ -324,10 +324,24 @@ class AgentStateMachine:
         # Non-negotiable Approval Safety Check
         if approval_manager is not None:
             if not approval_manager.is_execution_permitted(self.current_plan):
-                # Synchronize audit trail entries for this plan
-                for ev in approval_manager.get_audit_trail():
-                    if ev.plan_id == self.current_plan.plan_id and ev not in self.current_plan.audit_trail:
-                        self.current_plan.audit_trail.append(ev)
+                # Record a safe audit event (no sensitive arguments)
+                from packages.agentic_workflow.models import AuditEvent
+                import time as _time
+                req = approval_manager.get_request_for_plan(self.current_plan.plan_id)
+                decision = "EXPIRED"
+                audit_reason = "Execution blocked by approval gate: approval missing, rejected, or expired."
+                if req is not None:
+                    decision = req.status.value.upper()
+                    if req.reason:
+                        audit_reason = req.reason
+                audit_event = AuditEvent(
+                    step_id=self.current_plan.plan_id,
+                    decision=decision,
+                    reason=audit_reason,
+                    timestamp=_time.time(),
+                    plan_id=self.current_plan.plan_id,
+                )
+                self.current_plan.audit_trail.append(audit_event)
                 self.handle_error("Execution blocked: Plan approval is missing, rejected, or expired.")
                 raise PermissionError("Plan execution is not permitted by approval gate.")
         else:
@@ -339,8 +353,9 @@ class AgentStateMachine:
                 raise PermissionError("Plan was rejected.")
 
         from packages.agentic_workflow.mock_executor import MockToolExecutor
+        from packages.agentic_workflow.registry import ToolRegistry
 
-        exec_instance = executor or MockToolExecutor()
+        exec_instance = executor or MockToolExecutor(registry=ToolRegistry())
 
         if exec_instance.is_cancelled:
             self.current_plan.status = PlanStatus.CANCELLED
