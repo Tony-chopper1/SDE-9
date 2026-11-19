@@ -25,6 +25,15 @@ from packages.audio.device import (
     MockAudioDeviceAdapter,
     PermissionState,
 )
+from packages.audio.events import (
+    AudioEventDispatcher,
+    AudioEventType,
+    AudioSessionPipeline,
+)
+from packages.audio.stt_bridge import (
+    AudioSTTBridge,
+    MultiSessionSTTBridge,
+)
 from packages.audio.exceptions import (
     AudioConfigError,
     AudioDeviceError,
@@ -98,6 +107,13 @@ __all__ = [
     "BackpressureStrategy",
     "BufferTelemetry",
     "BufferError",
+    # Speech Events & Pipeline (Week 3 D15-16)
+    "AudioEventType",
+    "AudioEventDispatcher",
+    "AudioSessionPipeline",
+    # Audio-to-STT Bridge (Week 3 D19-20)
+    "AudioSTTBridge",
+    "MultiSessionSTTBridge",
     # Error envelope exceptions
     "AudioError",
     "AudioConfigError",

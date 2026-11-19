@@ -345,6 +345,24 @@ class AudioFrame(BaseModel):
         """Convenience alias for frame_index."""
         return self.frame_index
 
+    def to_envelope(
+        self,
+        session_id: str,
+        correlation_id: Optional[str] = None,
+        event_type: str = "audio.chunk",
+        producer: str = "packages.audio",
+        include_raw_bytes: bool = False,
+    ) -> EventEnvelope:
+        """Project this AudioFrame into the shared SDK-9 EventEnvelope."""
+        payload = self.to_dict(include_raw_bytes=include_raw_bytes)
+        return EventEnvelope.create(
+            event_type=event_type,
+            session_id=session_id,
+            correlation_id=correlation_id,
+            producer=producer,
+            payload=payload,
+        )
+
 class AudioChunk(AudioFrame):
     """Schema representing a discrete chunk of captured audio.
 
@@ -430,7 +448,12 @@ class EventEnvelope(BaseModel):
 
     def to_json(self) -> str:
         """Serialize envelope to JSON string."""
-        return json.dumps(self.to_dict())
+        def _json_default(obj: Any) -> Any:
+            if isinstance(obj, bytes):
+                return base64.b64encode(obj).decode("ascii")
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+        return json.dumps(self.to_dict(), default=_json_default)
 
     @classmethod
     def create(

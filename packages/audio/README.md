@@ -268,7 +268,85 @@ buffer.close()
 
 ---
 
-## 9. Robustness & Fault Tolerance (Day 14)
+## 9. Speech Events & Session Pipeline (Week 3, Days 15–16)
+
+The `AudioSessionPipeline` coordinates incoming audio frames, VAD classification, and ordered event emission with consistent `session_id` and `correlation_id` propagation conforming to `docs/integration-contracts.md`.
+
+### Event Types (`AudioEventType`)
+- `audio.vad.speech_start`: Emitted synchronously upon the transition from silence/idle to active speech, *before* the first speech chunk is delivered.
+- `audio.vad.speech_end`: Emitted immediately upon the transition from speech back to silence or upon stream flush. Includes segment duration and frame count.
+- `audio.chunk`: Normalized audio frame envelope carrying discrete PCM metadata (`frame_id`, `sequence_number`, `timestamp_ms`, `rms`, `dbfs`).
+- `audio.device.lost`: Emitted upon physical device disconnect or loss during active capture.
+- `audio.device.recovered`: Emitted upon device reconnection or fallback to an available device.
+- `audio.stream.cancelled`: Emitted upon coordinated cancellation.
+
+### Pipeline Example
+```python
+from audio.events import AudioSessionPipeline, AudioEventType
+from audio.vad import EnergyVAD
+
+pipeline = AudioSessionPipeline(
+    session_id="session-user-123",
+    correlation_id="corr-trace-456",
+    vad=EnergyVAD(threshold_db=-40.0),
+    emit_chunk_events=True,
+)
+
+# Process incoming stream frames
+for frame in source.stream():
+    events = pipeline.process_frame(frame)
+    for event in events:
+        print(f"[{event.event_type}] session={event.session_id} frame={event.payload.get('frame_id')}")
+
+# Flush at stream conclusion to cleanly close any active speech segment
+trailing_events = pipeline.flush()
+```
+
+---
+
+## 10. Device-Loss Recovery & Coordinated Cancellation (Week 3, Days 17–18)
+
+### Device-Loss Detection
+When the active capture device disconnects mid-stream:
+- `StreamLifecycleController.read_frame()` detects the unavailability cleanly without raising an unhandled exception or crashing.
+- Transitions lifecycle state to `StreamState.DEVICE_LOST`.
+- Closes the dead source safely and emits a standardized `audio.device.lost` event via `AudioEventDispatcher` with `session_id`, `correlation_id`, and `device_id`.
+- If active speech was in progress, `AudioSessionPipeline` cleanly terminates the speech segment with `audio.vad.speech_end` (`reason="device_loss_interruption"`).
+
+### Reconnection & Fallback
+- `controller.reconnect(target_device_id=None, allow_fallback=True)` attempts reconnection to the original device.
+- If the original device is unavailable, it automatically falls back to another available audio device (`is_fallback=True`).
+- Resets stream state to `StreamState.RUNNING` and emits `audio.device.recovered` with persistent `session_id` and `correlation_id`.
+- Duplicate recovery events are suppressed.
+
+### Coordinated Cancellation
+- `controller.cancel(reason="user_cancelled")`:
+  - Halts frame capture immediately.
+  - Closes active hardware/mock sources.
+  - Calls `BoundedAudioBuffer.cancel()`: purges all buffered frames and closes the buffer, unblocking consumer threads waiting on `pop()` or `read_frame()`.
+  - Calls `AudioSessionPipeline.cancel()`: bounds active speech segments and emits `audio.stream.cancelled`.
+  - Transitions lifecycle state to terminal `StreamState.STOPPED`.
+  - Idempotent on repeated calls.
+
+---
+
+## 11. Audio & VAD ↔ Speech-to-Text Integration Bridge (Week 3, Days 19–20)
+
+The `AudioSTTBridge` provides an integration bridge connecting the Audio & VAD event stream to the downstream `SpeechToTextOrchestrator`.
+
+### Architectural Guarantees
+- **Speech Boundary Enforcement**: Only chunks delivered between `audio.vad.speech_start` and `audio.vad.speech_end` are forwarded to STT. Chunks arriving outside active speech boundaries are dropped.
+- **Silence Rejection**: Non-speech frames (`is_speech=False`) are never forwarded as speech to STT, preventing spurious hallucinations or blank transcriptions.
+- **False Trigger Protection**: Rapid `speech_start` immediately followed by `speech_end` with 0 speech chunks does not force transcription flushes or corrupt state.
+- **Deduplication**: Chunks are deduplicated by `frame_id` and sequence number; duplicate deliveries are dropped safely.
+- **Sequence Gap & Out-of-Order Handling**: Monotonic sequence numbers are validated. Stale chunks are dropped, and sequence gaps are tracked in telemetry without throwing exceptions.
+- **Device Loss Safety**: Dispatches an immediate flush/finalization on `audio.device.lost` to prevent open utterances from hanging.
+- **Coordinated Cancellation Safety**: Stops the STT orchestrator immediately on `audio.stream.cancelled`, releasing pending interim work.
+- **Multi-Session Isolation**: `MultiSessionSTTBridge` isolates concurrent sessions into independent bridges, preventing audio or transcript crossover.
+
+---
+
+## 12. Robustness & Fault Tolerance (Day 14)
 
 The audio module includes comprehensive robustness testing (`tests/test_robustness.py`):
 1. **Audio Gaps & Missing Frames**: Downstream pipelines detect sequence number jumps (`seq=0 -> seq=3`) while timestamps maintain monotonically advancing stream offsets.
@@ -401,5 +479,12 @@ pytest packages/audio --cov=packages/audio --cov-report=term-missing
    - `tests/test_buffer.py` (13 tests): Backpressure strategies (`DROP_OLDEST`, `DROP_NEWEST`, `BLOCK`), capacity limits, 20ms and 30ms byte boundaries, multithreaded producer-consumer coordination, slow consumers, and stream generators.
 4. **Day 14 Robustness Tests** (7 tests):
    - `tests/test_robustness.py` (7 tests): Audio sequence gaps, out-of-order jitter, ambient noise vs clicks vs speech, bursty arrivals, 20ms/30ms interoperability, and unblocking of threads on buffer closure.
+5. **Week 3 Speech Events & Session Pipeline Tests** (12 tests):
+   - `tests/test_events.py` (11 tests): Automated `speech_start` and `speech_end` event emission, strict chronological ordering, session and correlation ID propagation, normalized `audio.chunk` payloads, multi-segment tracking, silence filtering, no duplicate transition events, and clean EOS flush.
+   - `tests/test_types_parity.py` (updated to 8 tests): Added `AudioEventType` enum parity validation.
+6. **Week 3 Device-Loss Recovery & Cancellation Tests** (22 tests):
+   - `tests/test_device_recovery.py` (22 tests): Device disconnect detection mid-stream, `audio.device.lost` event dispatch with session/correlation IDs, clean reconnection to original device, fallback to alternative device, graceful handling when no device is available, cancellation during active speech (`speech_end` followed by `stream_cancelled`), bounded buffer drain and closure, unblocking consumer threads waiting on `buffer.pop()`, idempotent cancellation, zero audio frames emitted after cancellation, session/correlation ID preservation, direct `handle_device_loss` during speech, duplicate loss/recovery suppression, faulty hardware read exception handling, permission states, and stream generator background recovery.
+7. **Week 3 Audio & VAD ↔ STT Integration Bridge Tests** (16 tests):
+   - `tests/test_stt_bridge.py` (16 tests): End-to-end audio chunk flow into STT in mock mode, speech boundaries enforcement (`speech_start` .. `speech_end`), silence rejection, false VAD trigger handling, monotonic ordering, timestamp preservation, gap detection, stale chunk drop, device loss handling (flush/close without hanging), cancellation termination, multi-session isolation (`MultiSessionSTTBridge`), deduplication by `frame_id`, direct `push_frame()` helper, base64 chunk delivery, custom orchestrator injection, and full pipeline-to-bridge integration.
 
-**Total**: 110 tests passing, $\ge 95\%$ test coverage across `packages/audio/`.
+**Total**: 160 tests passing, $\ge 95\%$ test coverage across `packages/audio/` (96% achieved).

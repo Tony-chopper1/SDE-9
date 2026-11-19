@@ -82,6 +82,27 @@ export type VADState = (typeof VADState)[keyof typeof VADState];
 export type VADStateString = VADState;
 
 // ============================================================================
+// Audio Event Types (Week 3 D15-16)
+// ============================================================================
+
+/**
+ * Standardized audio event types conforming to SDK-9 integration contracts.
+ * Matches Python packages.audio.events.AudioEventType.
+ */
+export const AudioEventType = {
+  SPEECH_START: 'audio.vad.speech_start',
+  SPEECH_END: 'audio.vad.speech_end',
+  AUDIO_CHUNK: 'audio.chunk',
+  STREAM_START: 'audio.stream.start',
+  STREAM_STOP: 'audio.stream.stop',
+  DEVICE_LOST: 'audio.device.lost',
+  DEVICE_RECOVERED: 'audio.device.recovered',
+  STREAM_CANCELLED: 'audio.stream.cancelled',
+} as const;
+
+export type AudioEventType = (typeof AudioEventType)[keyof typeof AudioEventType];
+
+// ============================================================================
 // Audio Format & Configuration Schemas
 // ============================================================================
 

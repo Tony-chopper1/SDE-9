@@ -100,6 +100,26 @@ class AudioDeviceAdapter(ABC):
         """
         raise NotImplementedError
 
+    def is_selected_device_available(self) -> bool:
+        """Return True if the currently selected device is physically available."""
+        try:
+            device = self.get_selected_device()
+            return device.is_available
+        except Exception:
+            return False
+
+    def find_fallback_device(self, exclude_id: Optional[str] = None) -> Optional[DeviceInfo]:
+        """Find an available fallback device, prioritizing the default device if available."""
+        try:
+            devices = self.list_devices()
+            available = [d for d in devices if d.is_available and d.device_id != exclude_id]
+            for d in available:
+                if d.is_default:
+                    return d
+            return available[0] if available else None
+        except Exception:
+            return None
+
 
 class MockAudioDeviceAdapter(AudioDeviceAdapter):
     """Deterministic, hardware-independent mock audio device adapter.
@@ -299,6 +319,25 @@ class MockAudioDeviceAdapter(AudioDeviceAdapter):
             else:
                 new_list.append(d)
         self._devices = new_list
+
+    def is_selected_device_available(self) -> bool:
+        """Return True if currently selected device exists and is available."""
+        if not self._selected_device_id:
+            return False
+        for d in self._devices:
+            if d.device_id == self._selected_device_id:
+                return d.is_available
+        return False
+
+    def find_fallback_device(self, exclude_id: Optional[str] = None) -> Optional[DeviceInfo]:
+        """Find an available fallback device, prioritizing default device if available."""
+        available = [d for d in self._devices if d.is_available and d.device_id != exclude_id]
+        if not available:
+            return None
+        for d in available:
+            if d.is_default:
+                return d
+        return available[0]
 
     # --- Source Factory ---
 
