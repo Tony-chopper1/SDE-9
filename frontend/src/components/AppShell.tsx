@@ -1,5 +1,6 @@
-import { ReactNode } from 'react';
+import React, { ReactNode } from 'react';
 import { EngineStatusPanel, EngineStatusData } from './EngineStatusPanel';
+import { EventStreamStatus } from '../api_client';
 
 export interface AppShellProps {
   children: ReactNode;
@@ -7,6 +8,7 @@ export interface AppShellProps {
   onTabChange: (tab: 'studio' | 'transcripts' | 'history') => void;
   serviceOnline?: boolean;
   engineStatus?: EngineStatusData;
+  streamStatus?: EventStreamStatus;
 }
 
 export const AppShell: React.FC<AppShellProps> = ({
@@ -15,6 +17,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   onTabChange,
   serviceOnline = true,
   engineStatus,
+  streamStatus,
 }) => {
   return (
     <div className="saas-app-shell">
@@ -39,7 +42,7 @@ export const AppShell: React.FC<AppShellProps> = ({
           <div className="nav-group-label" id="workspace-label">
             WORKSPACE
           </div>
-          <ul className="nav-list" role="menu" aria-labelledby="workspace-label">
+          <ul className="nav-list" role="menubar" aria-labelledby="workspace-label">
             <li role="none">
               <button
                 type="button"
@@ -111,6 +114,17 @@ export const AppShell: React.FC<AppShellProps> = ({
           </div>
 
           <div className="topbar-actions">
+            {streamStatus && (
+              <div
+                className={`stream-status-pill status-${streamStatus.toLowerCase()}`}
+                role="status"
+                aria-label={`Event stream connection status: ${streamStatus}`}
+              >
+                <span className={`stream-dot dot-${streamStatus.toLowerCase()}`} aria-hidden="true" />
+                <span className="stream-label">{streamStatus}</span>
+              </div>
+            )}
+
             <div
               className="system-health-pill"
               role="status"

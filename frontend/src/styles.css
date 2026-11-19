@@ -1649,3 +1649,1052 @@ html, body {
   border: 1px solid var(--danger-border);
   color: var(--danger-text);
 }
+
+
+/* ==========================================================================
+   Week 3 D15-16: Event Stream Connection Badges & Status Indicators
+   ========================================================================== */
+
+/* Topbar Stream Status Pill */
+.stream-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+}
+
+.stream-status-pill.status-connected {
+  background-color: var(--success-50);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.stream-status-pill.status-connecting {
+  background-color: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.stream-status-pill.status-error {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.stream-status-pill.status-disconnected {
+  background-color: var(--bg-subtle);
+  border-color: var(--border-light);
+  color: var(--text-muted);
+}
+
+.stream-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.stream-dot.dot-connected,
+.stream-dot-connected {
+  background-color: var(--success-600);
+  box-shadow: 0 0 6px rgba(22, 163, 74, 0.6);
+}
+
+.stream-dot.dot-connecting,
+.stream-dot-connecting {
+  background-color: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+  animation: pulse-stream 1.5s infinite ease-in-out;
+}
+
+.stream-dot.dot-error,
+.stream-dot-error {
+  background-color: var(--danger-600);
+  box-shadow: 0 0 6px rgba(220, 38, 38, 0.6);
+}
+
+.stream-dot.dot-disconnected,
+.stream-dot-disconnected {
+  background-color: #94a3b8;
+}
+
+@keyframes pulse-stream {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+}
+
+/* Voice Controls Header Stream Badge */
+.stream-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 16px;
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-light);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.stream-status-badge.stream-connected {
+  background-color: var(--success-50);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.stream-status-badge.stream-connecting {
+  background-color: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.stream-status-badge.stream-error {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.stream-status-badge.stream-disconnected {
+  background-color: var(--bg-subtle);
+  border-color: var(--border-light);
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   AGENTIC WORKFLOW PROGRESS CARD (WEEK 3 D18)
+   ========================================================================== */
+
+.workflow-section-wrapper {
+  margin-bottom: 24px;
+}
+
+.workflow-progress-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  transition: all 0.2s ease;
+}
+
+.workflow-progress-card.standby {
+  border-style: dashed;
+  background-color: #fafbfd;
+}
+
+.workflow-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workflow-eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.simulated-workflow-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background-color: #fef3c7;
+  border: 1px solid #fde68a;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #92400e;
+}
+
+.workflow-goal {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.standby-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-light);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.workflow-standby-body {
+  padding-top: 12px;
+}
+
+.workflow-standby-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.mock-demo-trigger-box {
+  background-color: #ffffff;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-top: 8px;
+}
+
+.mock-demo-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #b45309;
+  margin-bottom: 4px;
+}
+
+.mock-demo-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.load-demo-plan-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  background-color: var(--primary-600);
+  border: 1px solid var(--primary-700);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.load-demo-plan-btn:hover {
+  background-color: var(--primary-700);
+}
+
+.load-demo-plan-btn:focus-visible {
+  outline: 2px solid var(--primary-600);
+  outline-offset: 2px;
+}
+
+.clear-plan-btn {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.clear-plan-btn:hover {
+  background-color: var(--bg-muted);
+  color: var(--text-primary);
+}
+
+/* Badges: Safety Level */
+.safety-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+
+.safety-badge.safety-a {
+  background-color: var(--success-50);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.safety-badge.safety-b {
+  background-color: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1e40af;
+}
+
+.safety-badge.safety-c {
+  background-color: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+
+.safety-badge.safety-d {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+/* Badges: Plan Status */
+.plan-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.plan-status-badge.status-executing {
+  background-color: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.plan-status-badge.status-completed {
+  background-color: var(--success-50);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.plan-status-badge.status-failed {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.plan-status-badge.status-awaiting_approval {
+  background-color: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+
+.plan-status-badge.status-rejected {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.plan-status-badge.status-cancelled {
+  background-color: var(--bg-subtle);
+  border-color: var(--border-light);
+  color: var(--text-muted);
+}
+
+.plan-status-badge.status-pending {
+  background-color: var(--bg-muted);
+  border-color: var(--border-light);
+  color: var(--text-secondary);
+}
+
+/* Progress Track and Bar */
+.workflow-progress-section {
+  margin: 16px 0 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.workflow-progress-track {
+  width: 100%;
+  height: 8px;
+  background-color: var(--bg-muted);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.workflow-progress-fill {
+  height: 100%;
+  background-color: var(--primary-600);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.workflow-progress-fill.completed {
+  background-color: var(--success-600);
+}
+
+.workflow-progress-fill.failed {
+  background-color: var(--danger-600);
+}
+
+.workflow-progress-fill.rejected {
+  background-color: #d97706;
+}
+
+/* Steps List */
+.workflow-steps-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workflow-step-item {
+  display: flex;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background-color: #ffffff;
+  transition: all 0.15s ease;
+}
+
+.workflow-step-item.is-current-step {
+  border-color: #bfdbfe;
+  background-color: #f8faff;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.08);
+}
+
+.step-indicator-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.step-icon {
+  font-size: 14px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.step-icon-completed {
+  color: var(--success-600);
+}
+
+.step-icon-running {
+  color: var(--primary-600);
+  animation: pulse-stream 1.2s infinite ease-in-out;
+}
+
+.step-icon-failed {
+  color: var(--danger-600);
+}
+
+.step-icon-rejected {
+  color: #b45309;
+}
+
+.step-icon-cancelled {
+  color: #94a3b8;
+}
+
+.step-icon-pending {
+  color: #cbd5e1;
+}
+
+.step-number-text {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.step-content-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.step-description {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.step-badges-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.step-tool-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background-color: var(--bg-muted);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--text-secondary);
+}
+
+/* Step Status Pills */
+.step-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+
+.step-status-pill.pill-pending {
+  background-color: var(--bg-muted);
+  border-color: var(--border-light);
+  color: var(--text-muted);
+}
+
+.step-status-pill.pill-running {
+  background-color: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.step-status-pill.pill-completed {
+  background-color: var(--success-50);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.step-status-pill.pill-failed {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.step-status-pill.pill-rejected {
+  background-color: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+
+.step-status-pill.pill-cancelled {
+  background-color: var(--bg-subtle);
+  border-color: var(--border-light);
+  color: var(--text-muted);
+}
+
+/* Step Callouts */
+.step-error-callout {
+  font-size: 12px;
+  color: #991b1b;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  line-height: 1.4;
+}
+
+.step-error-callout .error-title {
+  font-weight: 700;
+}
+
+.step-rejected-callout {
+  font-size: 12px;
+  color: #92400e;
+  background-color: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+.step-cancelled-callout {
+  font-size: 12px;
+  color: var(--text-muted);
+  background-color: var(--bg-muted);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+
+/* ==========================================================================
+   Week 3 D19: Human-in-the-Loop Approval & Rejection Dialog Styles
+   ========================================================================== */
+
+.approval-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+  animation: fadeInBackdrop 0.15s ease-out;
+}
+
+@keyframes fadeInBackdrop {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.approval-dialog-modal {
+  background-color: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25);
+  width: 100%;
+  max-width: 620px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  outline: none;
+}
+
+.approval-dialog-modal:focus-visible {
+  outline: 2px solid var(--primary-600);
+  outline-offset: 2px;
+}
+
+.approval-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 18px 24px 14px 24px;
+  border-bottom: 1px solid var(--border-light);
+  background-color: #fafbfc;
+}
+
+.approval-header-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.approval-eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.approval-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.approval-dialog-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.approval-close-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.approval-close-btn:hover {
+  background-color: var(--bg-muted);
+  color: var(--text-primary);
+}
+
+.approval-close-btn:focus-visible {
+  outline: 2px solid var(--primary-600);
+  outline-offset: 2px;
+}
+
+.approval-dialog-body {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.approval-action-card {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background-color: #f8fafc;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.approval-action-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.approval-action-name-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.approval-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.approval-action-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.safety-badge-lg {
+  font-size: 11px;
+  padding: 5px 10px;
+}
+
+.approval-details-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border-light);
+  padding-top: 10px;
+}
+
+.approval-detail-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.detail-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 110px;
+  flex-shrink: 0;
+}
+
+.detail-value {
+  color: var(--text-primary);
+}
+
+.detail-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background-color: var(--bg-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-light);
+  color: var(--primary-700);
+}
+
+.detail-value-mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.approval-params-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.params-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.params-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background-color: #0f172a;
+  color: #f8fafc;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin: 0;
+  max-height: 110px;
+  overflow-y: auto;
+  border: 1px solid #1e293b;
+}
+
+/* Risk Callouts */
+.approval-risk-callout {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+}
+
+.approval-risk-callout.risk-level-d {
+  background-color: #fef2f2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+.approval-risk-callout.risk-level-c {
+  background-color: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.risk-icon {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.risk-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.risk-heading {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.risk-body-text {
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.approval-limitation-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background-color: var(--bg-muted);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  line-height: 1.4;
+}
+
+.limitation-label {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.approval-decision-banner {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.approval-decision-banner.decision-rejected {
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.approval-decision-banner.decision-approved {
+  background-color: var(--success-50);
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
+}
+
+.approval-reason-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reason-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.reason-input {
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background-color: #ffffff;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.reason-input:focus {
+  border-color: var(--primary-600);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.approval-dialog-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border-light);
+  background-color: #fafbfc;
+}
+
+.approval-decision-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.approval-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.approval-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.approval-btn-dismiss {
+  background-color: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-light);
+}
+
+.approval-btn-dismiss:hover:not(:disabled) {
+  background-color: var(--bg-muted);
+  color: var(--text-primary);
+}
+
+.approval-btn-reject {
+  background-color: #dc2626;
+  color: #ffffff;
+  border-color: #b91c1c;
+}
+
+.approval-btn-reject:hover:not(:disabled) {
+  background-color: #b91c1c;
+}
+
+.approval-btn-reject:focus-visible {
+  outline: 2px solid #dc2626;
+  outline-offset: 2px;
+}
+
+.approval-btn-approve {
+  background-color: var(--primary-600);
+  color: #ffffff;
+  border-color: var(--primary-700);
+}
+
+.approval-btn-approve:hover:not(:disabled) {
+  background-color: var(--primary-700);
+}
+
+.approval-btn-approve:focus-visible {
+  outline: 2px solid var(--primary-600);
+  outline-offset: 2px;
+}
+
+/* Pending Approval Banner in Workflow View */
+.pending-approval-card-banner {
+  margin: 12px 0;
+  padding: 10px 14px;
+  background-color: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-md);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.pending-approval-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.pending-approval-review-btn {
+  background-color: #b45309;
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.pending-approval-review-btn:hover {
+  background-color: #92400e;
+}
