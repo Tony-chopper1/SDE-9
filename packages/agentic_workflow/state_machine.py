@@ -1,4 +1,4 @@
-"""
+﻿"""
 Finite state machine for the Agentic Workflow module.
 
 Manages the full lifecycle of an agent session: state transitions with

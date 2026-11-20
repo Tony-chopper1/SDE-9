@@ -6,6 +6,9 @@ Covers:
     * Prerequisite topological execution ordering.
     * ToolRegistry allow-listing, parameter schema validation, and permission scopes.
     * ApprovalManager lifecycle, TTL expiration, and non-negotiable execution gating.
+    * Safe audit event recording (step ID, decision, reason, timestamp, strictly NO sensitive args)
+      for approve, reject, and expiry.
+    * Verifications that rejected or expired approvals run ZERO tools and write the audit event.
     * MockToolExecutor timeouts, bounded retries for idempotent tools, retry suppression
       for non-idempotent tools, and cancellation.
     * State machine execute_plan integration with topological execution and approval checks.
@@ -29,6 +32,7 @@ from packages.agentic_workflow.models import (
     ActionPlan,
     AgentState,
     ApprovalStatus,
+    AuditEvent,
     PermissionScope,
     PlanStatus,
     SafetyLevel,
@@ -347,7 +351,292 @@ class TestApprovalManager:
 
 
 # ===========================================================================
-# 4. Resilient Executor Tests (Timeouts, Retries, Cancellation)
+# 4. Safe Audit Trail & Zero Tool Invocations Tests (Mentor Week 2 Feedback)
+# ===========================================================================
+
+
+class TestApprovalAuditTrail:
+    """Verifies that approve, reject, and expiry record a safe audit event
+    (step ID, decision, reason, timestamp, strictly NO sensitive arguments)
+    and that rejected or expired approvals run ZERO tools."""
+
+    def test_approve_writes_audit_event(self):
+        mgr = ApprovalManager()
+        req = mgr.create_request(
+            plan_id="plan-audit-1",
+            session_id="sess-1",
+            safety_level=SafetyLevel.C,
+            step_id="step-101",
+        )
+        before = time.time()
+        mgr.approve(req.request_id, decided_by="admin", reason="Security review passed")
+        after = time.time()
+
+        trail = mgr.get_audit_trail()
+        assert len(trail) == 1
+        event = trail[0]
+
+        assert isinstance(event, AuditEvent)
+        assert event.step_id == "step-101"
+        assert event.decision == "APPROVED"
+        assert event.reason == "Security review passed"
+        assert before <= event.timestamp <= after
+        assert event.request_id == req.request_id
+        assert event.plan_id == "plan-audit-1"
+
+    def test_reject_writes_audit_event(self):
+        mgr = ApprovalManager()
+        req = mgr.create_request(
+            plan_id="plan-audit-2",
+            session_id="sess-2",
+            safety_level=SafetyLevel.D,
+            step_id="step-202",
+        )
+        before = time.time()
+        mgr.reject(req.request_id, decided_by="secops", reason="Unauthorized destination path")
+        after = time.time()
+
+        trail = mgr.get_audit_trail()
+        assert len(trail) == 1
+        event = trail[0]
+
+        assert isinstance(event, AuditEvent)
+        assert event.step_id == "step-202"
+        assert event.decision == "REJECTED"
+        assert event.reason == "Unauthorized destination path"
+        assert before <= event.timestamp <= after
+        assert event.request_id == req.request_id
+        assert event.plan_id == "plan-audit-2"
+
+    def test_explicit_expire_writes_audit_event(self):
+        mgr = ApprovalManager()
+        req = mgr.create_request(
+            plan_id="plan-audit-3",
+            session_id="sess-3",
+            safety_level=SafetyLevel.C,
+            step_id="step-303",
+        )
+        before = time.time()
+        mgr.expire(req.request_id, reason="Operator session timed out")
+        after = time.time()
+
+        trail = mgr.get_audit_trail()
+        assert len(trail) == 1
+        event = trail[0]
+
+        assert isinstance(event, AuditEvent)
+        assert event.step_id == "step-303"
+        assert event.decision == "EXPIRED"
+        assert event.reason == "Operator session timed out"
+        assert before <= event.timestamp <= after
+        assert event.request_id == req.request_id
+
+    def test_ttl_expiry_automatically_writes_audit_event(self):
+        mgr = ApprovalManager(default_ttl_seconds=0.01)
+        req = mgr.create_request(
+            plan_id="plan-audit-4",
+            session_id="sess-4",
+            safety_level=SafetyLevel.C,
+            ttl_seconds=0.01,
+            step_id="step-404",
+        )
+        assert len(mgr.get_audit_trail()) == 0
+
+        # Wait for TTL to pass
+        time.sleep(0.02)
+
+        # Trigger check via check_expiry
+        status = mgr.check_expiry(req.request_id)
+        assert status == ApprovalStatus.EXPIRED
+
+        trail = mgr.get_audit_trail()
+        assert len(trail) == 1
+        event = trail[0]
+        assert event.step_id == "step-404"
+        assert event.decision == "EXPIRED"
+        assert "expired" in event.reason.lower()
+
+    def test_audit_event_strictly_contains_no_sensitive_arguments(self):
+        """Audit trail entries must contain step ID, decision, reason, timestamp,
+        and strictly NO sensitive tool arguments or parameters."""
+        mgr = ApprovalManager()
+        req = mgr.create_request("p", "s", SafetyLevel.C, step_id="sensitive-step")
+        mgr.reject(req.request_id, reason="Disallowed parameters")
+
+        event = mgr.get_audit_trail()[0]
+        event_dict = event.model_dump()
+
+        # Verify only safe metadata fields exist
+        allowed_fields = {"step_id", "decision", "reason", "timestamp", "request_id", "plan_id"}
+        assert set(event_dict.keys()) == allowed_fields
+
+        # Explicitly assert absence of any parameter/argument payload keys
+        assert "parameters" not in event_dict
+        assert "arguments" not in event_dict
+        assert "payload" not in event_dict
+        assert "secret" not in event_dict
+        assert "source" not in event_dict
+
+    def test_rejected_approval_runs_zero_tools_and_writes_audit_event(self):
+        """Assert that a rejected approval runs ZERO tools and writes the audit event."""
+        sm = AgentStateMachine()
+        sm.transition_to(AgentState.LISTENING)
+        sm.transition_to(AgentState.PLANNING)
+
+        sensitive_step = _step(
+            "step-dangerous-move",
+            tool_name="file.move",
+            safety_level=SafetyLevel.D,
+            parameters={"source": "/etc/shadow", "destination": "/public/dump"},
+        )
+        plan = sm.build_plan("sess-audit-rej", "Move sensitive file", [sensitive_step])
+        assert sm.state == AgentState.AWAITING_APPROVAL
+
+        # Create approval manager and register the request
+        mgr = ApprovalManager()
+        req = mgr.create_request(
+            plan_id=plan.plan_id,
+            session_id="sess-audit-rej",
+            safety_level=SafetyLevel.D,
+            step_id=sensitive_step.id,
+        )
+
+        # Operator rejects the request
+        mgr.reject(req.request_id, reason="Access denied: sensitive path violation")
+
+        # Verify audit trail contains the rejection event
+        trail = mgr.get_audit_trail()
+        assert len(trail) == 1
+        assert trail[0].decision == "REJECTED"
+        assert trail[0].step_id == sensitive_step.id
+        assert trail[0].reason == "Access denied: sensitive path violation"
+
+        # Set up mock executor to verify zero tool invocations
+        mock_executor = MockToolExecutor()
+
+        # Manually attempt execution (simulating unauthorized bypass attempt)
+        sm.transition_to(AgentState.EXECUTING)
+        with pytest.raises(PermissionError) as exc_info:
+            sm.execute_plan(executor=mock_executor, approval_manager=mgr)
+
+        assert "not permitted" in str(exc_info.value).lower()
+        assert sm.state == AgentState.ERROR
+
+        # STRICT ASSERTION: ZERO tools were executed
+        assert len(mock_executor.execution_history) == 0, (
+            f"Expected 0 tool executions, but {len(mock_executor.execution_history)} were executed!"
+        )
+        # Step remains pending or rejected; output is None
+        assert sensitive_step.status == "pending"
+        assert sensitive_step.result is None
+        assert sensitive_step.started_at is None
+
+        # Audit event is intact in the manager audit trail
+        assert len(mgr.get_audit_trail()) == 1
+        assert mgr.get_audit_trail()[0].decision == "REJECTED"
+
+    def test_expired_approval_runs_zero_tools_and_writes_audit_event(self):
+        """Assert that an expired approval runs ZERO tools and writes the audit event."""
+        sm = AgentStateMachine()
+        sm.transition_to(AgentState.LISTENING)
+        sm.transition_to(AgentState.PLANNING)
+
+        sensitive_step = _step(
+            "step-expired-action",
+            tool_name="file.move",
+            safety_level=SafetyLevel.C,
+            parameters={"source": "/data/a.txt", "destination": "/data/b.txt"},
+        )
+        plan = sm.build_plan("sess-audit-exp", "Move file with short TTL", [sensitive_step])
+        assert sm.state == AgentState.AWAITING_APPROVAL
+
+        # Approval manager with short TTL (0.01s)
+        mgr = ApprovalManager(default_ttl_seconds=0.01)
+        req = mgr.create_request(
+            plan_id=plan.plan_id,
+            session_id="sess-audit-exp",
+            safety_level=SafetyLevel.C,
+            ttl_seconds=0.01,
+            step_id=sensitive_step.id,
+        )
+
+        # Allow TTL to elapse
+        time.sleep(0.02)
+
+        # Set up mock executor to track any tool invocations
+        mock_executor = MockToolExecutor()
+
+        # State machine attempts to execute
+        sm.transition_to(AgentState.EXECUTING)
+        with pytest.raises(PermissionError) as exc_info:
+            sm.execute_plan(executor=mock_executor, approval_manager=mgr)
+
+        assert "not permitted" in str(exc_info.value).lower()
+        assert sm.state == AgentState.ERROR
+
+        # STRICT ASSERTION: ZERO tools were executed
+        assert len(mock_executor.execution_history) == 0, (
+            f"Expected 0 tool executions, but {len(mock_executor.execution_history)} were executed!"
+        )
+        assert sensitive_step.status == "pending"
+        assert sensitive_step.result is None
+        assert sensitive_step.started_at is None
+
+        # Verify EXPIRED audit event was safely recorded with no sensitive args
+        trail = mgr.get_audit_trail()
+        assert len(trail) >= 1
+        expired_event = [e for e in trail if e.decision == "EXPIRED"][0]
+        assert expired_event.step_id == sensitive_step.id
+        assert expired_event.decision == "EXPIRED"
+        assert "expired" in expired_event.reason.lower()
+
+    def test_state_machine_reject_plan_records_audit_event(self):
+        sm = AgentStateMachine()
+        sm.transition_to(AgentState.LISTENING)
+        sm.transition_to(AgentState.PLANNING)
+
+        s1 = _step("step-reject-me", tool_name="file.move", safety_level=SafetyLevel.C)
+        sm.build_plan("sess-rej-plan", "Reject me", [s1])
+        assert sm.state == AgentState.AWAITING_APPROVAL
+
+        rejected_plan = sm.reject_plan("Policy violation")
+        assert rejected_plan.status == PlanStatus.REJECTED
+        assert len(rejected_plan.audit_trail) == 1
+        ev = rejected_plan.audit_trail[0]
+        assert ev.decision == "REJECTED"
+        assert ev.reason == "Policy violation"
+
+    def test_state_machine_approve_plan_records_audit_event(self):
+        sm = AgentStateMachine()
+        sm.transition_to(AgentState.LISTENING)
+        sm.transition_to(AgentState.PLANNING)
+
+        s1 = _step("step-approve-me", tool_name="file.move", safety_level=SafetyLevel.C)
+        sm.build_plan("sess-app-plan", "Approve me", [s1])
+        assert sm.state == AgentState.AWAITING_APPROVAL
+
+        approved_plan = sm.approve_plan()
+        assert approved_plan.status == PlanStatus.APPROVED
+        assert len(approved_plan.audit_trail) == 1
+        ev = approved_plan.audit_trail[0]
+        assert ev.decision == "APPROVED"
+
+    def test_no_duplicate_audit_events_on_multiple_checks(self):
+        mgr = ApprovalManager(default_ttl_seconds=0.01)
+        req = mgr.create_request("p", "s", SafetyLevel.C, ttl_seconds=0.01, step_id="st-1")
+        time.sleep(0.02)
+
+        # Multiple expiry checks
+        mgr.check_expiry(req.request_id)
+        mgr.check_expiry(req.request_id)
+        mgr.get_request(req.request_id)
+
+        # Must record exactly 1 expiry event
+        assert len(mgr.get_audit_trail()) == 1
+
+
+# ===========================================================================
+# 5. Resilient Executor Tests (Timeouts, Retries, Cancellation)
 # ===========================================================================
 
 
@@ -421,7 +710,7 @@ class TestResilientExecutor:
 
 
 # ===========================================================================
-# 5. State Machine Integration & Topological Execution
+# 6. State Machine Integration & Topological Execution
 # ===========================================================================
 
 

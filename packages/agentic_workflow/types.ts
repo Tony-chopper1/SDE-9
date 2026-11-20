@@ -1,4 +1,4 @@
-/**
+﻿/**
  * TypeScript interfaces for the Agentic Workflow & Tool Executor module.
  *
  * Mirrors the Pydantic models defined in `packages/agentic_workflow/models.py`,

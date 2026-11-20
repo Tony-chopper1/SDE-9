@@ -1,4 +1,4 @@
-"""
+﻿"""
 Mock Tool Executor for the Agentic Workflow module.
 
 Simulates the execution of registered harmless tools (file search and

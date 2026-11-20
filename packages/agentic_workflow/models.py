@@ -1,4 +1,4 @@
-"""
+﻿"""
 Pydantic models for the Agentic Workflow & Tool Executor module.
 
 Defines safety classification enums, agent lifecycle states, permission scopes,
