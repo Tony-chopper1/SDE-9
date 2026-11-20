@@ -491,3 +491,340 @@ class TestWeek3GateAndContractParity:
         assert payload["producer"] == "speech_to_text"
         assert payload["schema_version"] == "1.0"
         assert payload["payload"]["session_id"] == "test-parity"
+
+
+# =============================================================================
+# 5. Additional Week 3 Deep Contract & Edge Case Tests (20 tests)
+# =============================================================================
+
+class TestWeek3DeepContractAndEdgeCases:
+    """20 additional contract and edge-case tests validating all Week 3 failure and streaming boundaries."""
+
+    # -------------------------------------------------------------------------
+    # A. Multi-Session & Confidence Edge Cases (6 tests)
+    # -------------------------------------------------------------------------
+
+    def test_multi_session_isolation_independent_orchestrators(self):
+        """Verify concurrent orchestrator sessions maintain complete state and event isolation."""
+        session_a = f"session-a-{uuid4()}"
+        session_b = f"session-b-{uuid4()}"
+
+        orch_a = SpeechToTextOrchestrator(session_id=session_a)
+        orch_b = SpeechToTextOrchestrator(session_id=session_b)
+        orch_a.start()
+        orch_b.start()
+
+        # Ingest audio into session A only
+        orch_a.push_audio(b"\x01\x00" * 2000)
+        orch_a.flush()
+
+        # Verify session A has output, session B remains pristine
+        assert len(orch_a.get_full_transcript()) > 0
+        assert orch_b.get_full_transcript() == ""
+        assert all(e.session_id == session_a for e in orch_a.events_emitted)
+        assert len(orch_b.events_emitted) == 0
+
+    def test_interim_revision_without_text_change_does_not_duplicate_revision(self):
+        """Verify identical interim text produces standard interim, not redundant revised events."""
+        reconciler = TranscriptReconciler(session_id="session-dup-interim", emit_revised_events=True)
+
+        seg1 = TranscriptSegment(id="d1", text="same text", start_time=0.0, end_time=1.0, is_final=False)
+        ev1 = reconciler.process_segment(seg1)
+        assert ev1.event_type == "transcript.interim"
+
+        # Identical text in subsequent segment
+        seg2 = TranscriptSegment(id="d2", text="same text", start_time=0.0, end_time=1.2, is_final=False)
+        ev2 = reconciler.process_segment(seg2)
+        assert ev2.event_type == "transcript.interim"
+
+    def test_session_id_whitespace_stripping_and_preservation(self):
+        """Verify session IDs with leading/trailing whitespace are cleanly trimmed in reconciler."""
+        raw_id = "   session-trimmed-123   "
+        reconciler = TranscriptReconciler(session_id=raw_id)
+        assert reconciler.session_id == "session-trimmed-123"
+
+    def test_confidence_threshold_exact_boundary(self):
+        """Verify confidence comparison at exact threshold boundary (>= threshold is not low confidence)."""
+        reconciler = TranscriptReconciler(
+            session_id="session-boundary",
+            confidence_threshold=0.65,
+            low_confidence_action="tag",
+        )
+
+        # Exactly at threshold
+        seg_exact = TranscriptSegment(id="b1", text="boundary word", confidence=0.65, start_time=0.0, end_time=1.0)
+        ev_exact = reconciler.process_segment(seg_exact)
+        assert ev_exact.segment.is_low_confidence is False
+
+        # Just below threshold
+        seg_below = TranscriptSegment(id="b2", text="below word", confidence=0.649, start_time=1.1, end_time=2.0)
+        ev_below = reconciler.process_segment(seg_below)
+        assert ev_below.segment.is_low_confidence is True
+
+    def test_confidence_threshold_extreme_bounds_zero_and_one(self):
+        """Verify extreme threshold boundaries: 0.0 (tag none) and 1.0 (tag all)."""
+        rec_zero = TranscriptReconciler(session_id="s0", confidence_threshold=0.0)
+        seg = TranscriptSegment(id="z1", text="zero threshold test", confidence=0.05, start_time=0.0, end_time=1.0)
+        ev_zero = rec_zero.process_segment(seg)
+        assert ev_zero.segment.is_low_confidence is False
+
+        rec_one = TranscriptReconciler(session_id="s1", confidence_threshold=1.0)
+        seg_high = TranscriptSegment(id="z2", text="one threshold test", confidence=0.99, start_time=0.0, end_time=1.0)
+        ev_one = rec_one.process_segment(seg_high)
+        assert ev_one.segment.is_low_confidence is True
+
+    def test_low_confidence_action_reject_mode(self):
+        """Verify low_confidence_action='reject' completely omits low-confidence segments."""
+        reconciler = TranscriptReconciler(
+            session_id="session-reject",
+            confidence_threshold=0.80,
+            low_confidence_action="reject",
+        )
+
+        low_seg = TranscriptSegment(id="rej1", text="unreliable voice data", confidence=0.50, start_time=0.0, end_time=1.0)
+        result = reconciler.process_segment(low_seg)
+        assert result is None
+        assert reconciler.get_full_transcript() == ""
+
+    # -------------------------------------------------------------------------
+    # B. Cancellation & State Concurrency (5 tests)
+    # -------------------------------------------------------------------------
+
+    def test_cancellation_during_active_audio_accumulation(self):
+        """Verify cancellation purges uncommitted accumulator buffer and prevents state leakage."""
+        orchestrator = SpeechToTextOrchestrator(session_id="cancel-acc")
+        orchestrator.start()
+
+        # Ingest less than min chunk bytes so audio is buffered
+        orchestrator.push_audio(b"\x01\x00" * 500)
+        assert len(orchestrator._buffered_pcm) > 0
+
+        orchestrator.cancel(reason="buffer purge test")
+        assert len(orchestrator._buffered_pcm) == 0
+        assert orchestrator.state == OrchestratorState.CANCELLED
+
+    def test_cancellation_idempotency(self):
+        """Verify calling cancel() repeatedly is completely idempotent without throwing."""
+        orchestrator = SpeechToTextOrchestrator(session_id="cancel-idempotent")
+        orchestrator.start()
+
+        ev1 = orchestrator.cancel(reason="first cancel")
+        ev2 = orchestrator.cancel(reason="second cancel")
+        assert ev1.event_type == "transcript.cancelled"
+        assert ev2.event_type == "transcript.cancelled"
+        assert orchestrator.state == OrchestratorState.CANCELLED
+
+    def test_orchestrator_restart_after_cancellation(self):
+        """Verify orchestrator can cleanly restart and process new speech after being cancelled."""
+        orchestrator = SpeechToTextOrchestrator(session_id="cancel-restart")
+        orchestrator.start()
+        orchestrator.cancel()
+        assert orchestrator.state == OrchestratorState.CANCELLED
+
+        # Restart session
+        orchestrator.start()
+        assert orchestrator.state == OrchestratorState.RUNNING
+        assert orchestrator.missing_chunks_count == 0
+        assert orchestrator.out_of_order_chunks_count == 0
+
+        # Now push audio and verify successful transcription
+        evs = orchestrator.push_audio(b"\x02\x00" * 2000)
+        assert len(evs) > 0
+        assert len(orchestrator.get_full_transcript()) > 0
+
+    def test_cancellation_preserves_custom_reason_and_correlation_id(self):
+        """Verify correlation_id and custom reasons are present in cancellation events."""
+        corr_id = f"corr-{uuid4()}"
+        orchestrator = SpeechToTextOrchestrator(
+            session_id="cancel-corr",
+            correlation_id=corr_id,
+        )
+        orchestrator.start()
+        cancel_evt = orchestrator.cancel(reason="user navigation away")
+
+        assert cancel_evt.correlation_id == corr_id
+        assert cancel_evt.details["reason"] == "user navigation away"
+
+    def test_concurrent_audio_push_and_cancellation_thread_safety(self):
+        """Verify multi-threaded audio pushing and cancellation under RLock without deadlocks."""
+        import threading
+
+        orchestrator = SpeechToTextOrchestrator(session_id="cancel-threaded")
+        orchestrator.start()
+
+        def audio_pusher():
+            for _ in range(20):
+                orchestrator.push_audio(b"\x01\x00" * 400)
+
+        t1 = threading.Thread(target=audio_pusher)
+        t2 = threading.Thread(target=audio_pusher)
+        t1.start()
+        t2.start()
+
+        # Concurrently cancel
+        orchestrator.cancel(reason="concurrent cancel")
+        t1.join()
+        t2.join()
+
+        assert orchestrator.state == OrchestratorState.CANCELLED
+
+    # -------------------------------------------------------------------------
+    # C. Quota, Network Failures, Fallback & Error Normalization (5 tests)
+    # -------------------------------------------------------------------------
+
+    def test_fallback_on_consecutive_timeout_errors(self):
+        """Verify timeout errors trigger fallback and produce valid fallback transcript text."""
+        orchestrator = SpeechToTextOrchestrator(
+            session_id="timeout-fallback",
+            transcriber=TimeoutTranscriber(),
+            fallback_transcriber=FakeTranscriberService(),
+            enable_fallback=True,
+        )
+        orchestrator.start()
+
+        evs = orchestrator.push_audio(b"\x01\x00" * 2000)
+        assert orchestrator.is_fallback_active is True
+        assert len(orchestrator.get_full_transcript()) > 0
+
+    def test_fallback_preserves_audio_content_across_provider_switch(self):
+        """Verify audio chunk is completely transcribed by fallback provider without dropping bytes."""
+        events_captured: List[TranscriptEvent] = []
+        orchestrator = SpeechToTextOrchestrator(
+            session_id="content-fallback",
+            transcriber=QuotaExceededTranscriber(),
+            fallback_transcriber=FakeTranscriberService(),
+            enable_fallback=True,
+            on_event=events_captured.append,
+        )
+        orchestrator.start()
+
+        # Ingest 2 large chunks
+        orchestrator.push_audio(b"\x02\x00" * 2000)
+        orchestrator.push_audio(b"\x02\x00" * 2000)
+        utterance = orchestrator.finalize_utterance()
+
+        assert len(utterance.full_text) > 0
+        assert any(e.event_type == "transcript.fallback" for e in events_captured)
+
+    def test_fallback_event_contains_error_envelope_details(self):
+        """Verify transcript.fallback carries comprehensive diagnostic fields."""
+        events_captured: List[TranscriptEvent] = []
+        orchestrator = SpeechToTextOrchestrator(
+            session_id="details-fallback",
+            transcriber=QuotaExceededTranscriber(),
+            fallback_transcriber=FakeTranscriberService(),
+            enable_fallback=True,
+            on_event=events_captured.append,
+        )
+        orchestrator.start()
+        orchestrator.push_audio(b"\x01\x00" * 2000)
+
+        fb_evts = [e for e in events_captured if e.event_type == "transcript.fallback"]
+        assert len(fb_evts) == 1
+        d = fb_evts[0].details
+        assert "reason" in d
+        assert d["error_code"] == "STT_QUOTA_EXCEEDED"
+        assert d["fallback_provider"] == "FakeTranscriberService"
+
+    def test_rate_limit_429_mapped_to_rate_limit_error_with_fallback(self):
+        """Verify HTTP 429 Rate Limit error triggers fallback with STTRateLimitError."""
+        class RateLimitedTranscriber:
+            def transcribe(self, audio_data: bytes, **kwargs):
+                raise RuntimeError("429 Too Many Requests: rate limit exceeded")
+
+        events_captured: List[TranscriptEvent] = []
+        orchestrator = SpeechToTextOrchestrator(
+            session_id="ratelimit-fallback",
+            transcriber=RateLimitedTranscriber(),
+            fallback_transcriber=FakeTranscriberService(),
+            enable_fallback=True,
+            on_event=events_captured.append,
+        )
+        orchestrator.start()
+        orchestrator.push_audio(b"\x01\x00" * 2000)
+
+        assert orchestrator.is_fallback_active is True
+        fb_evts = [e for e in events_captured if e.event_type == "transcript.fallback"]
+        assert fb_evts[0].details["error_code"] == "STT_RATE_LIMIT"
+
+    def test_fallback_disabled_raises_normalized_timeout_error(self):
+        """Verify typed STTTimeoutError is raised cleanly when fallback is disabled."""
+        orchestrator = SpeechToTextOrchestrator(
+            session_id="timeout-nofallback",
+            transcriber=TimeoutTranscriber(),
+            enable_fallback=False,
+        )
+        orchestrator.start()
+
+        with pytest.raises(STTTimeoutError) as exc_info:
+            orchestrator.push_audio(b"\x01\x00" * 2000)
+
+        assert exc_info.value.code == "STT_TIMEOUT"
+        assert "timed out" in exc_info.value.message.lower()
+
+    # -------------------------------------------------------------------------
+    # D. Stream Sequencing, Missing Chunks & Event Bridge (4 tests)
+    # -------------------------------------------------------------------------
+
+    def test_large_sequence_gap_accumulates_missing_chunks_count(self):
+        """Verify non-consecutive frames increment missing_chunks_count by exact dropped frame span."""
+        orchestrator = SpeechToTextOrchestrator(session_id="seq-gaps")
+        orchestrator.start()
+
+        chunk = b"\x01\x00" * 1600
+        # Sequence: 0, 10 (9 missing: 1..9), 25 (14 missing: 11..24) -> total 23 missing
+        orchestrator.push_audio(chunk, sequence_number=0)
+        orchestrator.push_audio(chunk, sequence_number=10)
+        orchestrator.push_audio(chunk, sequence_number=25)
+
+        assert orchestrator.missing_chunks_count == 23
+
+    def test_reverse_ordered_chunks_resilience(self):
+        """Verify chunks arriving in backwards order are counted as out-of-order without crashing."""
+        orchestrator = SpeechToTextOrchestrator(session_id="seq-reverse")
+        orchestrator.start()
+
+        chunk = b"\x01\x00" * 1600
+        # Reverse sequence: 5, 4, 3, 2, 1, 0
+        for seq in [5, 4, 3, 2, 1, 0]:
+            orchestrator.push_audio(chunk, sequence_number=seq)
+
+        # 5 out-of-order packets after the first frame
+        assert orchestrator.out_of_order_chunks_count == 5
+        assert orchestrator.state == OrchestratorState.RUNNING
+
+    def test_audio_frame_without_sequence_number_fallback_to_frame_index(self):
+        """Verify AudioFrame objects lacking sequence_number fall back to frame_index attribute."""
+        class MockFrameWithIndex:
+            def __init__(self, idx: int):
+                self.data = b"\x01\x00" * 1600
+                self.sample_rate = 16000
+                self.channels = 1
+                self.frame_index = idx
+
+        orchestrator = SpeechToTextOrchestrator(session_id="frame-index-tracking")
+        orchestrator.start()
+
+        f0 = MockFrameWithIndex(idx=0)
+        f5 = MockFrameWithIndex(idx=5)
+        orchestrator.push_audio(f0)
+        orchestrator.push_audio(f5)
+
+        assert orchestrator.missing_chunks_count == 4
+
+    def test_backend_event_bridge_handles_event_service_exception_gracefully(self):
+        """Verify TranscriptEventBridge never crashes orchestrator if backend EventService throws."""
+        class BrokenEventService:
+            def publish_event(self, session_id, data):
+                raise ConnectionError("Backend Redis/DB bus down")
+
+        bridge = TranscriptEventBridge(event_service=BrokenEventService())
+        event = TranscriptEvent(
+            session_id="err-boundary",
+            event_type="transcript.interim",
+            segment=TranscriptSegment(id="e1", text="test", start_time=0.0, end_time=1.0),
+        )
+
+        # Must not raise unhandled exception
+        bridge.on_transcript_event(event)
+        assert len(bridge.published_events) == 1
