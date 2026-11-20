@@ -7,7 +7,7 @@
 
 export type AccumulatorState = 'IDLE' | 'ACCUMULATING' | 'PAUSED' | 'FINALIZED';
 
-export type OrchestratorState = 'IDLE' | 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
+export type OrchestratorState = 'IDLE' | 'RUNNING' | 'PAUSED' | 'STOPPED' | 'CANCELLED' | 'ERROR';
 
 export interface TranscriptSegment {
   id: string;
@@ -16,6 +16,7 @@ export interface TranscriptSegment {
   start_time: number; // in seconds
   end_time: number;   // in seconds
   is_final: boolean;
+  is_low_confidence?: boolean;
   speaker_id?: string;
   language?: string;
 }
@@ -32,16 +33,25 @@ export interface AccumulatedUtterance {
 }
 
 export interface TranscriptEvent {
+  event_id?: string;
   event_type:
     | 'transcript.segment'
     | 'transcript.interim'
+    | 'transcript.revised'
     | 'transcript.final'
     | 'transcript.utterance'
+    | 'transcript.cancelled'
+    | 'transcript.fallback'
     | 'transcript.state_change';
   session_id: string;
+  correlation_id?: string;
+  schema_version?: string;
+  producer?: string;
   segment?: TranscriptSegment;
   utterance?: AccumulatedUtterance;
   state?: AccumulatorState | OrchestratorState;
+  is_fallback?: boolean;
+  details?: Record<string, unknown>;
   timestamp: number;
 }
 
@@ -56,6 +66,7 @@ export interface STTErrorEnvelope {
     | 'STT_PROVIDER_ERROR'
     | 'STT_CONNECTION_ERROR'
     | 'STT_RATE_LIMIT'
+    | 'STT_QUOTA_EXCEEDED'
     | 'AUDIO_PREPROCESS_ERROR';
   timestamp: number;
   details?: Record<string, unknown>;
@@ -118,10 +129,14 @@ export interface ISpeechToTextOrchestrator {
   readonly state: OrchestratorState;
   readonly totalFramesProcessed: number;
   readonly totalAudioBytesIngested: number;
+  readonly missingChunksCount: number;
+  readonly outOfOrderChunksCount: number;
+  readonly isFallbackActive: boolean;
   start(): void;
   pause(): void;
   resume(): void;
-  pushAudio(audioData: Uint8Array | ArrayBuffer, sampleRate?: number, channels?: number): TranscriptEvent[];
+  cancel(reason?: string): TranscriptEvent;
+  pushAudio(audioData: Uint8Array | ArrayBuffer, sampleRate?: number, channels?: number, timestamp?: number, isSpeech?: boolean, sequenceNumber?: number): TranscriptEvent[];
   flush(): TranscriptEvent | null;
   finalizeUtterance(): AccumulatedUtterance;
   stop(): AccumulatedUtterance;
