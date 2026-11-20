@@ -1,5 +1,6 @@
 import React from 'react';
 import { RecordingState, MicPermissionState } from '../types/speech';
+import { EventStreamStatus } from '../api_client';
 
 export interface VoiceControlsProps {
   isRecording: boolean;
@@ -16,6 +17,9 @@ export interface VoiceControlsProps {
   onResume?: () => void;
   onStop?: () => void;
   micPermission?: MicPermissionState;
+
+  // Week 3 Extensions:
+  streamStatus?: EventStreamStatus;
 }
 
 export const VoiceControls: React.FC<VoiceControlsProps> = ({
@@ -31,6 +35,7 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
   onResume,
   onStop,
   micPermission = 'prompt',
+  streamStatus,
 }) => {
   // Determine effective state: explicit recordingState takes precedence; fallback to boolean props
   const effectiveState: RecordingState =
@@ -51,6 +56,21 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
         </div>
 
         <div className="card-header-badges">
+          {/* Accessible Stream Connection Status Badge (when available) */}
+          {streamStatus && (
+            <div
+              className={`stream-status-badge stream-${streamStatus.toLowerCase()}`}
+              role="status"
+              aria-label={`Event stream: ${streamStatus}`}
+            >
+              <span
+                className={`stream-dot stream-dot-${streamStatus.toLowerCase()}`}
+                aria-hidden="true"
+              />
+              <span className="stream-label">{streamStatus}</span>
+            </div>
+          )}
+
           {/* Accessible Microphone Permission State Badge */}
           <div
             className={`permission-badge perm-${micPermission}`}
