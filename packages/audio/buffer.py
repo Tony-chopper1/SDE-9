@@ -238,6 +238,12 @@ class BoundedAudioBuffer:
             self._not_empty.notify_all()
             self._not_full.notify_all()
 
+    def cancel(self) -> None:
+        """Atomically clear all queued frames and close buffer, unblocking waiting threads."""
+        with self._lock:
+            self.clear()
+            self.close()
+
     def get_telemetry(self) -> BufferTelemetry:
         """Return snapshot telemetry of buffer status and drops."""
         with self._lock:

@@ -5,6 +5,7 @@
  */
 import {
   APPROVED_TEAM_DEFAULTS,
+  AudioEventType,
   PROVISIONAL_STT_SETTINGS,
   SUPPORTED_SAMPLE_RATES,
   VADState,
@@ -122,4 +123,9 @@ assert(isEventEnvelope(envelope), 'envelope matches EventEnvelope interface');
 assert(envelope.producer === 'packages.audio', 'producer matches audio module');
 assert(envelope.schema_version === '1.0.0', 'schema_version matches contract');
 
-console.log('All TypeScript type tests passed successfully (7/7 assertions verified).');
+// 8. Verify AudioEventType values (Week 3 D15-16)
+assert(AudioEventType.SPEECH_START === 'audio.vad.speech_start', 'AudioEventType.SPEECH_START matches');
+assert(AudioEventType.SPEECH_END === 'audio.vad.speech_end', 'AudioEventType.SPEECH_END matches');
+assert(AudioEventType.AUDIO_CHUNK === 'audio.chunk', 'AudioEventType.AUDIO_CHUNK matches');
+
+console.log('All TypeScript type tests passed successfully (8/8 assertions verified).');

@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 import pytest
 
+from packages.audio.events import AudioEventType
 from packages.audio.models import (
     AudioConfig,
     AudioFrame,
@@ -36,6 +37,14 @@ def test_vad_state_enum_parity():
     for state in VADState:
         pattern = rf"{state.name}\s*:\s*['\"]{state.value}['\"]"
         assert re.search(pattern, ts_content), f"VADState.{state.name} missing or mismatched in types.ts"
+
+
+def test_audio_event_type_enum_parity():
+    """Verify TypeScript AudioEventType const object matches Python AudioEventType enum values."""
+    ts_content = _load_ts_content()
+    for evt in AudioEventType:
+        pattern = rf"{evt.name}\s*:\s*['\"]{evt.value}['\"]"
+        assert re.search(pattern, ts_content), f"AudioEventType.{evt.name} missing or mismatched in types.ts"
 
 
 def test_audio_config_field_parity():
