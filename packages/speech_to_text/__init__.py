@@ -14,6 +14,7 @@ from packages.speech_to_text.exceptions import (
     STTConnectionError,
     STTError,
     STTProviderError,
+    STTQuotaExceededError,
     STTRateLimitError,
     STTTimeoutError,
     normalize_stt_exception,
@@ -24,6 +25,7 @@ from packages.speech_to_text.orchestrator import (
     OrchestratorState,
     SpeechToTextOrchestrator,
 )
+from packages.speech_to_text.event_stream import TranscriptEventBridge
 
 __all__ = [
     "AccumulatorState",
@@ -39,9 +41,11 @@ __all__ = [
     "STTProviderError",
     "STTConnectionError",
     "STTRateLimitError",
+    "STTQuotaExceededError",
     "normalize_stt_exception",
     "BoundedRetryHandler",
     "TranscriptReconciler",
     "SpeechToTextOrchestrator",
     "OrchestratorState",
+    "TranscriptEventBridge",
 ]

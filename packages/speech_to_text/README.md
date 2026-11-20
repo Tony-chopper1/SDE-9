@@ -1,7 +1,7 @@
 # Speech-to-Text & Segment Accumulator Module (`packages/speech_to_text/`)
 
-> **Owner**: Pavanchand RM (Team Lead) · Branch: `features/pavan-week2`  
-> **Task**: W2 – Speech-to-Text: Orchestration, Reconciliation, Retries & Preprocessing (Week 2)
+> **Owner**: Pavanchand RM (Team Lead) · Branch: `feature/pavan-week3`  
+> **Task**: Week 3 (Days 15–21) – Session Revision & Finalization, Confidence Thresholds, Cancellation, Fallback & Backend Event Stream Integration
 
 ---
 
@@ -104,13 +104,16 @@ packages/speech_to_text/
 
 ---
 
-## 7. Acceptance Criteria Verification
+## 7. Acceptance Criteria Verification (Week 2 & Week 3)
 
 | Acceptance Criteria | Status | Verification Detail |
 | :--- | :---: | :--- |
-| **Transcript schemas compile without errors** | ✅ **PASSED** | Validated via `test_transcript_segment_validation`, Pydantic bounds, and `types.ts`. |
-| **Deterministic Fake Transcriber** | ✅ **PASSED** | Fixed base time (0.0) replaces `time.time()`; verified via `test_fake_transcriber_strictly_deterministic_without_offset`. |
-| **Accumulator handles ordering & interims** | ✅ **PASSED** | Validated via out-of-order, reverse, shuffled, and interim live update tests. |
-| **Test coverage > 80%** | ✅ **PASSED (98%)** | Achieves **98% test coverage** across the package with 78 passing unit, integration, and contract tests. |
-| **Documentation complete** | ✅ **PASSED** | Architecture diagram, component specs, and CLI instructions included. |
-| **No memory leaks on large transcript sets** | ✅ **PASSED** | Stress-tested via `test_memory_leak_stress_test` with 1,000 rapid segments. |
+| **Interim results revised and finalized with clear events** | ✅ **PASSED** | Emits `transcript.interim`, `transcript.revised`, `transcript.final`, and `transcript.utterance` carrying `session_id`. |
+| **Configurable confidence thresholds** | ✅ **PASSED** | Configurable `confidence_threshold` (default 0.65) and actions (`tag` or `filter`) flag low-confidence speech safely. |
+| **Clean cancellation of in-flight transcription** | ✅ **PASSED** | `cancel()` halts streaming, clears pending audio and uncommitted drafts, transitions state to `CANCELLED`, and emits `transcript.cancelled`. |
+| **Mock provider fallback on quota / network failures** | ✅ **PASSED** | Catches quota (429, ResourceExhausted) and network failures, normalizes errors, emits `transcript.fallback`, and seamlessly falls back to `FakeTranscriberService`. |
+| **Audio events flow into transcription** | ✅ **PASSED** | Validated via `AudioSTTBridge` and direct `AudioFrame` ingestion in mock mode. |
+| **Transcript events reach backend event stream** | ✅ **PASSED** | `TranscriptEventBridge` delivers live transcript events into backend `EventService` and SSE stream. |
+| **Tests cover out-of-order and missing chunks** | ✅ **PASSED** | Verified disordered sequence handling and gap tracking (`missing_chunks_count`, `out_of_order_chunks_count`). |
+| **Pass with no real provider or API key** | ✅ **PASSED** | All tests run 100% offline in deterministic mock mode without API keys or external services. |
+| **No duplicate schemas & contracts defined once** | ✅ **PASSED** | Reuses core schemas in `models.py` with TypeScript parity in `types.ts`. |

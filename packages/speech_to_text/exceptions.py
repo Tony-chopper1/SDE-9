@@ -124,6 +124,23 @@ class STTRateLimitError(STTError):
         )
 
 
+class STTQuotaExceededError(STTError):
+    """Raised when provider quota or credits are completely exhausted."""
+
+    def __init__(
+        self,
+        message: str = "API quota exceeded for speech-to-text provider.",
+        details: Optional[Dict[str, Any]] = None,
+        original_exception: Optional[Exception] = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            code="STT_QUOTA_EXCEEDED",
+            details=details or {},
+            original_exception=original_exception,
+        )
+
+
 def normalize_stt_exception(
     exc: Exception,
     provider_name: str = "mock",
@@ -136,19 +153,54 @@ def normalize_stt_exception(
         return exc
 
     exc_str = str(exc)
+    exc_lower = exc_str.lower()
     exc_type = type(exc).__name__
 
-    if isinstance(exc, TimeoutError) or "timeout" in exc_str.lower() or "timed out" in exc_str.lower():
-        return STTTimeoutError(
-            message=f"Transcription timed out: {exc_str}",
-            details={"original_error_type": exc_type},
+    if (
+        "quota" in exc_lower
+        or "resource_exhausted" in exc_lower
+        or "resourceexhausted" in exc_lower
+        or "insufficient_quota" in exc_lower
+        or "credit" in exc_lower
+    ):
+        return STTQuotaExceededError(
+            message=f"Provider quota exhausted: {exc_str}",
+            details={"original_error_type": exc_type, "provider": provider_name},
             original_exception=exc,
         )
 
-    if isinstance(exc, (ConnectionError, ConnectionResetError, BrokenPipeError)) or "connection" in exc_str.lower():
+    if (
+        "429" in exc_str
+        or "rate limit" in exc_lower
+        or "too many requests" in exc_lower
+    ):
+        return STTRateLimitError(
+            message=f"Provider rate limit exceeded: {exc_str}",
+            details={"original_error_type": exc_type, "provider": provider_name},
+            original_exception=exc,
+        )
+
+    if (
+        isinstance(exc, TimeoutError)
+        or "timeout" in exc_lower
+        or "timed out" in exc_lower
+    ):
+        return STTTimeoutError(
+            message=f"Transcription timed out: {exc_str}",
+            details={"original_error_type": exc_type, "provider": provider_name},
+            original_exception=exc,
+        )
+
+    if (
+        isinstance(exc, (ConnectionError, ConnectionResetError, BrokenPipeError))
+        or "connection" in exc_lower
+        or "network" in exc_lower
+        or "socket" in exc_lower
+        or "unreachable" in exc_lower
+    ):
         return STTConnectionError(
-            message=f"STT stream connection lost: {exc_str}",
-            details={"original_error_type": exc_type},
+            message=f"STT stream network/connection lost: {exc_str}",
+            details={"original_error_type": exc_type, "provider": provider_name},
             original_exception=exc,
         )
 

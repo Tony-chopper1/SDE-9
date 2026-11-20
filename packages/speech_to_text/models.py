@@ -34,6 +34,7 @@ class TranscriptSegment(BaseModel):
     start_time: float = Field(..., description="Start timestamp in seconds")
     end_time: float = Field(..., description="End timestamp in seconds")
     is_final: bool = Field(default=True, description="Whether segment is committed (final) or interim (partial)")
+    is_low_confidence: bool = Field(default=False, description="Flagged true if confidence falls below threshold")
     speaker_id: Optional[str] = None
     language: str = "en"
 
@@ -81,13 +82,50 @@ class AccumulatedUtterance(BaseModel):
 
 class TranscriptEvent(BaseModel):
     """
-    Event emitted when a segment is processed or an utterance is finalized.
-    Provides standard event envelope for inter-service communication.
+    Event emitted when a segment is processed, revised, finalized, cancelled,
+    or an utterance is finalized.
+    Provides standard event envelope for inter-service communication carrying
+    its required session_id and optional correlation_id.
     """
     model_config = ConfigDict(extra="ignore")
 
-    event_type: str = "transcript.segment"
-    session_id: str
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique event identifier")
+    event_type: str = Field(default="transcript.segment", description="Event classification (e.g. transcript.interim, transcript.revised, transcript.final, transcript.utterance, transcript.cancelled, transcript.fallback)")
+    session_id: str = Field(..., description="Active session ID associated with this event")
+    correlation_id: Optional[str] = Field(default=None, description="Optional distributed tracing correlation ID")
+    schema_version: str = Field(default="1.0", description="Contract schema version")
+    producer: str = Field(default="speech_to_text", description="Originating service producer")
     segment: Optional[TranscriptSegment] = None
     utterance: Optional[AccumulatedUtterance] = None
-    timestamp: float = Field(default_factory=time.time)
+    is_fallback: bool = Field(default=False, description="Whether event originated during mock provider fallback")
+    details: Optional[dict] = Field(default=None, description="Additional metadata or error context")
+    timestamp: float = Field(default_factory=time.time, description="Unix timestamp in seconds")
+
+    @model_validator(mode="after")
+    def validate_session_id(self) -> "TranscriptEvent":
+        """Ensure session_id is always present and non-empty."""
+        if not self.session_id or not str(self.session_id).strip():
+            raise ValueError("session_id must be a non-empty string.")
+        return self
+
+    def to_backend_payload(self) -> dict:
+        """Serialize into backend-compatible EventCreate dictionary payload."""
+        payload = {
+            "event_id": self.event_id,
+            "session_id": self.session_id,
+            "correlation_id": self.correlation_id,
+            "timestamp": self.timestamp,
+            "is_fallback": self.is_fallback,
+        }
+        if self.segment:
+            payload["segment"] = self.segment.model_dump(mode="json")
+        if self.utterance:
+            payload["utterance"] = self.utterance.model_dump(mode="json")
+        if self.details:
+            payload["details"] = self.details
+        return {
+            "event_type": self.event_type,
+            "schema_version": self.schema_version,
+            "producer": self.producer,
+            "payload": payload,
+        }

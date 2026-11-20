@@ -18,20 +18,49 @@ from packages.speech_to_text.models import TranscriptEvent, TranscriptSegment
 
 
 class TranscriptReconciler:
-    """Stateful reconciler ensuring streaming STT output is ordered, deduplicated, and consistent."""
+    """Stateful reconciler ensuring streaming STT output is ordered, deduplicated, and consistent.
 
-    def __init__(self, session_id: str = "default-session") -> None:
-        self.session_id = session_id
+    Supports:
+    - Session and correlation tracking on every event.
+    - Interim-to-revised-to-final event transitions.
+    - Configurable confidence thresholds and low-confidence handling (tagging/filtering).
+    - Duplicate detection and suppression.
+    - Monotonic chronological sorting.
+    """
+
+    def __init__(
+        self,
+        session_id: str = "default-session",
+        correlation_id: Optional[str] = None,
+        confidence_threshold: float = 0.65,
+        low_confidence_action: str = "tag",
+        emit_revised_events: bool = False,
+    ) -> None:
+        if not session_id or not str(session_id).strip():
+            raise ValueError("session_id must be a non-empty string.")
+
+        self.session_id = session_id.strip()
+        self.correlation_id = correlation_id
+        self.confidence_threshold = confidence_threshold
+        self.low_confidence_action = low_confidence_action.lower()  # "tag", "filter", "reject"
+        self.emit_revised_events = emit_revised_events
+
         self._finalized_segments: List[TranscriptSegment] = []
         self._interim_segment: Optional[TranscriptSegment] = None
         self._seen_ids: Set[str] = set()
         self._seen_hashes: Set[str] = set()
         self._duplicate_count: int = 0
+        self._low_confidence_count: int = 0
 
     @property
     def duplicate_count(self) -> int:
         """Number of duplicate segments suppressed."""
         return self._duplicate_count
+
+    @property
+    def low_confidence_count(self) -> int:
+        """Number of low-confidence segments detected."""
+        return self._low_confidence_count
 
     @property
     def finalized_segments(self) -> List[TranscriptSegment]:
@@ -48,7 +77,7 @@ class TranscriptReconciler:
 
         Returns:
             A :class:`~packages.speech_to_text.models.TranscriptEvent` if the segment is accepted,
-            or ``None`` if the segment is a suppressed duplicate or empty.
+            or ``None`` if the segment is a suppressed duplicate, empty, or filtered out.
         """
         if not segment.text or not segment.text.strip():
             return None
@@ -59,18 +88,31 @@ class TranscriptReconciler:
             self._duplicate_count += 1
             return None
 
-        # 2. Interim vs. Final Reconciliation
+        # 2. Confidence Threshold Evaluation
+        if segment.confidence < self.confidence_threshold:
+            segment.is_low_confidence = True
+            self._low_confidence_count += 1
+            if self.low_confidence_action in ("filter", "reject"):
+                return None
+
+        # 3. Interim vs. Revised vs. Final Reconciliation
         if not segment.is_final:
-            # Interim segment: Update current working draft
+            is_revision = (
+                self.emit_revised_events
+                and self._interim_segment is not None
+                and self._interim_segment.text.strip() != segment.text.strip()
+            )
+            event_type = "transcript.revised" if is_revision else "transcript.interim"
             self._interim_segment = segment
             return TranscriptEvent(
-                event_type="transcript.interim",
+                event_type=event_type,
                 session_id=self.session_id,
+                correlation_id=self.correlation_id,
                 segment=segment,
                 timestamp=time.time(),
             )
 
-        # 3. Final Segment Commitment
+        # 4. Final Segment Commitment
         # Mark as seen so duplicates are permanently rejected
         self._seen_ids.add(segment.id)
         self._seen_hashes.add(content_hash)
@@ -84,9 +126,14 @@ class TranscriptReconciler:
         return TranscriptEvent(
             event_type="transcript.final",
             session_id=self.session_id,
+            correlation_id=self.correlation_id,
             segment=segment,
             timestamp=time.time(),
         )
+
+    def clear_interim(self) -> None:
+        """Clear the active interim uncommitted segment (e.g. on cancellation)."""
+        self._interim_segment = None
 
     def _insert_chronologically(self, segment: TranscriptSegment) -> None:
         """Insert segment in sorted order by start_time, resolving boundary overlaps."""
