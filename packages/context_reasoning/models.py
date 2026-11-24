@@ -137,7 +137,32 @@ class ContextItem(BaseModel):
         return v
 
 
-class ScreenContext(BaseModel):
+class Observation(BaseModel):
+    """Represents a single observation extracted from a screen frame or other source.
+    Includes provenance, timestamp, and optional duplicate flag.
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    observation_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4())[:8],
+        description="Unique identifier for the observation.",
+    )
+    timestamp: float = Field(
+        default_factory=time.time,
+        description="Unix timestamp when the observation was created.",
+    )
+    source: SourceReference = Field(
+        ..., description="Provenance of the observation (e.g., frame_id)."
+    )
+    content: str = Field(..., description="Extracted text or description of the observation.")
+    is_duplicate: bool = Field(
+        default=False,
+        description="Flag set during deduplication if this observation duplicates prior content.",
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Arbitrary additional metadata for the observation.")
+
+class ScreenContext(BaseModel):(BaseModel):
     """
     Represents captured screen frame or visual context.
 
@@ -435,9 +460,9 @@ class ReasoningResult(BaseModel):
         default_factory=list,
         description="Step-by-step explainable reasoning trace for observability.",
     )
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Arbitrary additional decision metadata.",
+    source_references: List[SourceReference] = Field(
+        default_factory=list,
+        description="List of source references backing the reasoning result.",
     )
 
     @field_validator("intent")
@@ -468,7 +493,7 @@ class VisionRegion(BaseModel):
     text_content: Optional[str] = Field(default=None, description="OCR text extracted from this specific region.")
 
 
-class VisionResult(BaseModel):
+
     """Structured output produced by an OCR/Vision processing engine."""
     model_config = ConfigDict(extra="ignore")
 

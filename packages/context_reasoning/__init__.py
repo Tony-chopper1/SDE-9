@@ -9,6 +9,7 @@ from packages.context_reasoning.models import (
     WindowContext,
     SourceReference,
     ContextItem,
+    Observation,
     ScreenContext,
     ConversationTurn,
     ConversationContext,
@@ -49,6 +50,7 @@ __all__ = [
     "WindowContext",
     "SourceReference",
     "ContextItem",
+    "Observation",
     "ScreenContext",
     "ConversationTurn",
     "ConversationContext",
@@ -60,7 +62,8 @@ __all__ = [
     "LLMResponse",
     "CaptureConfig",
     "ContextBuilderConfig",
-    # Exceptions
+    "Observation",
+
     "ContextReasoningError",
     "CaptureDisabledError",
     "SamplingRateLimitError",

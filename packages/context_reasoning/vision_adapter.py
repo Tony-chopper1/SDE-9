@@ -88,7 +88,7 @@ class MockVisionAdapter(BaseVisionAdapter):
         self.fail_mode: bool = fail_mode
 
     def process_frame(self, frame: ScreenContext) -> VisionResult:
-        """Process frame and return consolidated VisionResult."""
+        """Process frame and return consolidated VisionResult along with observations."""
         if self.fail_mode:
             raise VisionProcessingError(f"Simulated vision hardware failure on frame '{frame.frame_id}'.")
 
@@ -97,6 +97,19 @@ class MockVisionAdapter(BaseVisionAdapter):
         text = self.extract_text(frame)
         elapsed_ms = (time.perf_counter() - start) * 1000.0 + self.simulated_latency_ms
 
+        # Build observations from regions
+        observations = []
+        for region in regions:
+            obs = Observation(
+                timestamp=time.time(),
+                source=SourceReference(source_id=frame.frame_id, source_type="screen", title=region.label, is_trusted=False),
+                content=region.text_content or "",
+                metadata={"region_id": region.region_id, "label": region.label},
+            )
+            observations.append(obs)
+
+        # Attach observations to the VisionResult via metadata (optional) or return separately.
+        # Here we embed them in metadata for downstream processing.
         return VisionResult(
             frame_id=frame.frame_id or "unknown-frame",
             extracted_text=text,
@@ -107,6 +120,7 @@ class MockVisionAdapter(BaseVisionAdapter):
                 "is_synthetic": frame.is_synthetic,
                 "resolution": f"{frame.width}x{frame.height}",
                 "engine": "SDK9_MockOCR_v2",
+                "observations": observations,
             },
         )
 
