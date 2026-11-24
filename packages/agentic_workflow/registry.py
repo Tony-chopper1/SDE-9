@@ -7,10 +7,9 @@ and validates caller permission scopes before execution.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Collection, Dict, Optional, Set
+from typing import Any, Collection, Dict, List, Optional, Set
 
-from packages.agentic_workflow.models import PermissionScope, SafetyLevel
+from packages.agentic_workflow.models import PermissionScope, SafetyLevel, ToolSpec
 from packages.agentic_workflow.validator import PlanValidationError
 
 
@@ -52,34 +51,6 @@ class PermissionDeniedError(Exception):
             f"Permission denied for tool '{tool_name}'. "
             f"Required scope: '{required_scope.value}', granted: [{granted_str}]"
         )
-
-
-# ---------------------------------------------------------------------------
-# Tool Specification
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ToolSpec:
-    """Specification defining permissions, idempotency, and parameter schema for a tool.
-
-    Attributes:
-        name: Dot-namespaced tool identifier.
-        permission_scope: Minimal permission boundary required.
-        is_idempotent: Whether repeated invocations produce identical side-effects.
-        safety_level: Default risk classification.
-        required_parameters: Dict of parameter name to expected Python type.
-        optional_parameters: Dict of parameter name to expected Python type.
-        description: Human-readable description of tool capabilities.
-    """
-
-    name: str
-    permission_scope: PermissionScope
-    is_idempotent: bool
-    safety_level: SafetyLevel
-    required_parameters: Dict[str, type] = field(default_factory=dict)
-    optional_parameters: Dict[str, type] = field(default_factory=dict)
-    description: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -233,27 +204,33 @@ class ToolRegistry:
         spec = self.get_spec(tool_name)
 
         # 1. Check required parameters
-        for param_name, expected_type in spec.required_parameters.items():
+        req_items = (
+            spec.required_parameters.items()
+            if isinstance(spec.required_parameters, dict)
+            else [(p, Any) for p in spec.required_parameters]
+        )
+        for param_name, expected_type in req_items:
             if param_name not in parameters:
                 raise ToolParameterError(
                     tool_name=tool_name,
                     message=f"Missing required parameter '{param_name}'",
                 )
-            val = parameters[param_name]
-            if not isinstance(val, expected_type):
-                raise ToolParameterError(
-                    tool_name=tool_name,
-                    message=(
-                        f"Parameter '{param_name}' expected type {expected_type.__name__}, "
-                        f"got {type(val).__name__}"
-                    ),
-                )
-            # Empty string check for strings
-            if expected_type is str and not str(val).strip():
-                raise ToolParameterError(
-                    tool_name=tool_name,
-                    message=f"Parameter '{param_name}' must not be an empty string",
-                )
+            if expected_type is not Any:
+                val = parameters[param_name]
+                if not isinstance(val, expected_type):
+                    raise ToolParameterError(
+                        tool_name=tool_name,
+                        message=(
+                            f"Parameter '{param_name}' expected type {expected_type.__name__}, "
+                            f"got {type(val).__name__}"
+                        ),
+                    )
+                # Empty string check for strings
+                if expected_type is str and not str(val).strip():
+                    raise ToolParameterError(
+                        tool_name=tool_name,
+                        message=f"Parameter '{param_name}' must not be an empty string",
+                    )
 
         # 2. Check types of optional parameters if supplied
         for param_name, val in parameters.items():
