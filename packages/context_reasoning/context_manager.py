@@ -11,8 +11,10 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 
 from packages.context_reasoning.models import (
+    ContextItem,
     ConversationContext,
     ConversationTurn,
+    ScreenContext,
     WindowContext,
 )
 
@@ -24,6 +26,8 @@ class ContextManager:
     Features:
     - Thread-safe conversational turn accumulation with bounded sliding window.
     - Active OS window and code/screen snippet synchronization.
+    - Privacy-first screen context capture toggle (off by default).
+    - Deterministic synthetic screen frame generation for testing and simulation.
     - Serialization and state recovery from dictionary and JSON.
     - Formatted dialogue transcript generation for prompt injection.
     """
@@ -33,6 +37,7 @@ class ContextManager:
         session_id: str,
         max_turns: int = 100,
         default_window: Optional[WindowContext] = None,
+        capture_enabled: bool = False,
     ) -> None:
         """
         Initialize ContextManager for a given session.
@@ -41,19 +46,114 @@ class ContextManager:
             session_id: Unique session identifier.
             max_turns: Maximum number of conversation turns to retain in memory.
             default_window: Optional custom initial window context.
+            capture_enabled: Whether screen context capture is enabled (defaults to False).
         """
         if not session_id or not session_id.strip():
             raise ValueError("session_id must be a non-empty string.")
 
-        self.session_id: str = session_id
+        self.session_id: str = session_id.strip()
         self.max_turns: int = max(1, max_turns)
+        self.capture_enabled: bool = capture_enabled
         self._context: ConversationContext = ConversationContext(
-            session_id=session_id,
+            session_id=self.session_id,
             active_window=default_window or WindowContext(),
             history=[],
             user_query="",
+            screen_context=None,
+            context_items=[],
             timestamp=time.time(),
         )
+
+    def set_capture_enabled(self, enabled: bool) -> None:
+        """
+        Enable or disable screen context capture (privacy opt-in toggle).
+
+        Args:
+            enabled: True to permit screen capture; False to disable.
+        """
+        self.capture_enabled = bool(enabled)
+        if self._context.screen_context:
+            self._context.screen_context.capture_enabled = self.capture_enabled
+
+    def is_capture_enabled(self) -> bool:
+        """Check whether screen context capture is currently permitted."""
+        return self.capture_enabled
+
+    def update_screen_context(self, screen_context: ScreenContext) -> ScreenContext:
+        """
+        Update the current screen context frame.
+
+        Args:
+            screen_context: ScreenContext instance to record.
+
+        Returns:
+            Recorded ScreenContext snapshot.
+        """
+        self._context.screen_context = screen_context
+        self._context.timestamp = time.time()
+        return screen_context
+
+    def capture_synthetic_frame(
+        self,
+        width: int = 640,
+        height: int = 480,
+        pattern: str = "test_bars",
+        visible_text: Optional[str] = None,
+        force: bool = False,
+    ) -> ScreenContext:
+        """
+        Capture or generate a synthetic screen frame for simulation and testing.
+
+        Enforces privacy policy: raises PermissionError if screen capture is disabled
+        unless force=True is passed explicitly for unit testing.
+
+        Args:
+            width: Horizontal resolution in pixels.
+            height: Vertical resolution in pixels.
+            pattern: Synthetic visual pattern name.
+            visible_text: Simulated visible code or text.
+            force: If True, bypasses the capture_enabled check (test override).
+
+        Returns:
+            Generated synthetic ScreenContext.
+
+        Raises:
+            PermissionError: If screen capture is disabled and force is False.
+        """
+        if not self.capture_enabled and not force:
+            raise PermissionError(
+                "Screen capture is disabled by default. "
+                "Call set_capture_enabled(True) to opt-in before capturing screen context."
+            )
+
+        frame = ScreenContext.create_synthetic(
+            width=width,
+            height=height,
+            capture_enabled=self.capture_enabled or force,
+            pattern=pattern,
+            visible_text=visible_text or self._context.active_window.visible_snippet,
+            active_window=self._context.active_window,
+        )
+        self.update_screen_context(frame)
+        return frame
+
+    def add_context_item(self, item: ContextItem) -> ContextItem:
+        """
+        Add a discrete context item (e.g., untrusted snippet, system context).
+
+        Args:
+            item: ContextItem instance to attach to the session.
+
+        Returns:
+            Added ContextItem.
+        """
+        self._context.context_items.append(item)
+        self._context.timestamp = time.time()
+        return item
+
+    def get_context_items(self) -> List[ContextItem]:
+        """Retrieve list of discrete context items attached to current context."""
+        return list(self._context.context_items)
 
     def update_user_query(
         self,
@@ -164,9 +264,11 @@ class ContextManager:
         self._context.timestamp = time.time()
 
     def reset(self) -> None:
-        """Reset conversation history, query, and timestamps while retaining session ID."""
+        """Reset conversation history, query, screen context, and context items while retaining session ID."""
         self._context.history.clear()
         self._context.user_query = ""
+        self._context.screen_context = None
+        self._context.context_items.clear()
         self._context.active_window = WindowContext()
         self._context.timestamp = time.time()
 
@@ -211,7 +313,11 @@ class ContextManager:
             Restored ContextManager instance.
         """
         context = ConversationContext.model_validate(data)
-        manager = cls(session_id=context.session_id, max_turns=max_turns)
+        manager = cls(
+            session_id=context.session_id,
+            max_turns=max_turns,
+            capture_enabled=context.screen_context.capture_enabled if context.screen_context else False,
+        )
         manager._context = context
         return manager
 

@@ -7,9 +7,14 @@ and tool parameter extraction without requiring external paid LLM credentials.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from packages.context_reasoning.models import ConversationContext, ReasoningResult
+from packages.context_reasoning.models import (
+    ConversationContext,
+    ReasoningRequest,
+    ReasoningResult,
+    WindowContext,
+)
 
 
 class MockReasoningService:
@@ -33,24 +38,43 @@ class MockReasoningService:
         """
         self.confidence_threshold: float = confidence_threshold
 
-    def reason(self, context: ConversationContext) -> ReasoningResult:
+    def reason(self, context: Union[ConversationContext, ReasoningRequest]) -> ReasoningResult:
         """
         Classify user intent and determine if tools are needed.
 
         Args:
-            context: Current ConversationContext containing user_query, active_window,
-                     and conversation history.
+            context: Current ConversationContext or ReasoningRequest containing user_query,
+                     active_window, and conversation history.
 
         Returns:
             Structured ReasoningResult containing intent, tool invocation plan,
             direct response, confidence score, and explainable reasoning steps.
         """
-        query = (context.user_query or "").strip()
-        query_lower = query.lower()
-        active_window = context.active_window
-        snippet = active_window.visible_snippet or ""
+        if isinstance(context, ReasoningRequest):
+            query = (context.query or "").strip()
+            if context.context:
+                active_window = context.context.active_window
+                snippet = active_window.visible_snippet or (
+                    context.screen_context.visible_text if context.screen_context else ""
+                ) or ""
+            else:
+                active_window = (
+                    context.screen_context.active_window
+                    if context.screen_context and context.screen_context.active_window
+                    else WindowContext()
+                )
+                snippet = (
+                    context.screen_context.visible_text if context.screen_context else ""
+                ) or ""
+        else:
+            query = (context.user_query or "").strip()
+            active_window = context.active_window
+            snippet = active_window.visible_snippet or (
+                context.screen_context.visible_text if context.screen_context else ""
+            ) or ""
         steps: List[str] = [f"Received query: '{query}'"]
         steps.append(f"Context: App='{active_window.app_name}', Title='{active_window.window_title}'")
+        query_lower = query.lower()
 
         if not query:
             steps.append("Empty query detected; returning default idle response.")
@@ -123,7 +147,7 @@ class MockReasoningService:
             )
 
         # 5. Code Summarization & Explanation
-        if any(term in query_lower for term in ("summarize", "explain this code", "explain the code", "what does this do", "what is this code")):
+        if any(term in query_lower for term in ("summarize", "explain this code", "explain the code", "what does this do", "what is this code", "explain what this code does", "explain code")):
             steps.append("Matched code explanation keywords -> Intent: SUMMARIZE_CODE")
             summary = self._generate_code_summary(snippet, active_window.app_name)
             steps.append("Generated code summary using visible editor snippet.")

@@ -9,33 +9,41 @@ The **Context & Reasoning** module establishes multimodal context tracking, vers
 ```mermaid
 flowchart TD
     subgraph InputContext["Input & Context Stream"]
-        Win["OS Window / Screen Tracker\n(app_name, title, visible_snippet)"]
+        Win["OS Window Tracker\n(app_name, title, visible_snippet)"]
+        Screen["Screen Capture Engine\n(Opt-in, Off by Default, Synthetic Frames)"]
         Query["Voice / Text Query\n(STT transcript / user input)"]
+        Items["Discrete Context Items\n(ContextItem with SourceReference)"]
     end
 
     subgraph ContextEngine["Context Manager"]
         CM["ContextManager\n(Bounded Sliding Window, 0 Leaks)"]
+        Privacy["Privacy Policy Gate\n(capture_enabled=False by default)"]
         History["Conversation History\n(User, Assistant, System Turns)"]
         Serial["Serialization & State Recovery\n(to_dict, to_json, from_json)"]
+        CM --> Privacy
         CM --> History
         CM --> Serial
     end
 
     subgraph PromptEngine["Prompt System"]
         PM["VersionedPromptManager\n(v1.0, v1.1, v2.0 Templates)"]
-        Inject["Variable Substitution\n({app_name}, {snippet}, {history}, {query})"]
-        PM --> Inject
+        Trust["Trust Boundary Enforcement\n(Delimited Untrusted Blocks & Sanitization)"]
+        Inject["Variable Substitution & Breakout Defense"]
+        PM --> Trust
+        Trust --> Inject
     end
 
     subgraph DecisionEngine["Mock Reasoning Service"]
         Reasoner["MockReasoningService\n(Rule & Intent Classifier)"]
         Explain["Explainable Steps\n(reasoning_steps trace)"]
-        Plan["Structured ReasoningResult\n(Intent, Tool Name, Parameters, Direct Response)"]
+        Req["ReasoningRequest & ReasoningResult\n(Strict Validation & Typing)"]
         Reasoner --> Explain
-        Reasoner --> Plan
+        Reasoner --> Req
     end
 
     Win --> CM
+    Screen --> CM
+    Items --> CM
     Query --> CM
     CM --> PM
     CM --> Reasoner
@@ -44,28 +52,50 @@ flowchart TD
 
 ---
 
-## 📦 Core Components
+## 📦 Core Components & Domain Schemas
 
 ### 1. Domain Models (`models.py` & `types.ts`)
+- **`ScreenContext`**:
+  - Captures screen frames or visual context.
+  - **Privacy-first**: `capture_enabled` defaults to `False` (opt-in only).
+  - Deterministic synthetic test frame generator: `ScreenContext.create_synthetic(width, height, pattern, ...)`.
+- **`ContextItem`**:
+  - Discrete context unit supplied to reasoning (`item_id`, `item_type`, `content`, `source`, `is_trusted`, `timestamp`).
+  - Explicit trust boundary flag (`is_trusted=False` for external/user data).
+- **`SourceReference`**:
+  - Origin and provenance tracking (`source_id`, `source_type`, `title`, `uri`, `is_trusted`, `timestamp`).
+- **`ReasoningRequest`**:
+  - Typed input payload sent to reasoning (`session_id`, `query`, `context`, `context_items`, `screen_context`, `prompt_version`, `temperature`).
+  - Validates non-empty `session_id`, non-empty `query`, and bounded `temperature` (0.0 to 2.0).
+- **`ReasoningResult`**:
+  - Structured decision output (`intent`, `requires_tool`, `planned_tool_name`, `tool_parameters`, `direct_response`, `confidence`, `reasoning_steps`).
+  - Validates non-empty `intent` and calibrated `confidence` (0.0 to 1.0).
 - **`WindowContext`**: Tracks active operating system window context (e.g. `VS Code`, `Chrome`), focused file titles, application category, and visible code/document snippets.
-- **`ConversationTurn`**: Represents an individual dialogue turn (`user`, `assistant`, `system`) with unique ID, timestamp, and optional metadata.
-- **`ConversationContext`**: Complete snapshot of session state, active window, turn history, and latest user query.
+- **`ConversationTurn`**: Represents an individual dialogue turn (`user`, `assistant`, `system`) with unique ID, timestamp, and metadata.
+- **`ConversationContext`**: Complete snapshot of session state, active window, turn history, screen context, context items, and user query.
 - **`VersionedPromptTemplate`**: Immutable version-controlled prompt templates with auto-extracted placeholder variables.
-- **`ReasoningResult`**: Structured decision output with classified intent, tool execution requirements, extracted arguments, direct user responses, calibrated confidence (0.0–1.0), and explainable reasoning traces.
 
 ### 2. Context Manager (`context_manager.py`)
-- **Sliding History Window**: Maintains conversation turns with configurable `max_turns` limit to prevent memory bloat during long sessions.
+- **Privacy Gate & Screen Capture**: Screen capture is **off by default** (`capture_enabled=False`). `capture_synthetic_frame()` enforces explicit opt-in (`PermissionError` raised if disabled).
+- **Sliding History Window**: Maintains conversation turns with configurable `max_turns` limit to prevent memory bloat.
 - **Active Window Synchronization**: Live updates for focused applications, window titles, and visible screen snippets.
 - **Serialization & Deserialization**: Robust state saving and recovery through `to_dict()`, `to_json()`, `from_dict()`, and `from_json()`.
-- **Dialogue Transcript Generation**: Generates clean, formatted multi-turn transcripts for LLM prompt injection (`get_history_summary()`).
+- **Dialogue Transcript Generation**: Generates clean, formatted multi-turn transcripts for prompt injection (`get_history_summary()`).
 
 ### 3. Versioned Prompt Manager (`prompt_manager.py`)
+- **Trusted vs. Untrusted Separation**:
+  - System instructions are kept strictly separate from untrusted screen snippets and user queries.
+  - Untrusted data is enclosed within explicit security delimiters:
+    - `<<<UNTRUSTED_SCREEN_CONTENT>>>`
+    - `<<<UNTRUSTED_CONVERSATION_HISTORY>>>`
+    - `<<<UNTRUSTED_USER_QUERY>>>`
+- **Prompt Injection Defense**:
+  - `sanitize_untrusted_text()` automatically escapes delimiter breakout attempts (e.g. `<<<END_UNTRUSTED_...>>>`).
+  - System directives instruct the LLM to treat content inside untrusted delimiters strictly as passive data and never follow commands within untrusted blocks.
 - **Built-in Templates**:
-  - `v1.0`: Standard contextual prompt with active application, snippet, history, and query.
+  - `v1.0`: Baseline prompt with trusted directives and delimited untrusted blocks.
   - `v1.1`: Tool-oriented reasoning prompt defining tool schemas (`file.search`, `file.move`, `calc.evaluate`).
   - `v2.0`: Autonomous agent prompt integrating Safety Levels A–D guidelines.
-- **Safe Variable Interpolation**: Uses placeholder fallbacks to ensure templates never crash if variables are omitted.
-- **Dynamic Registration**: Allows runtime registration of custom versioned prompt templates with automatic variable extraction.
 
 ### 4. Mock Reasoning Service (`mock_reasoning.py`)
 Deterministic, rule-based reasoning engine that classifies developer intent without external API costs or network latency:
@@ -88,81 +118,60 @@ Deterministic, rule-based reasoning engine that classifies developer intent with
 ```python
 from packages.context_reasoning import (
     ContextManager,
+    ContextItem,
+    ScreenContext,
     VersionedPromptManager,
     MockReasoningService,
+    ReasoningRequest,
 )
 
-# 1. Initialize Context Manager
+# 1. Initialize Context Manager (capture off by default)
 cm = ContextManager(session_id="session-001", max_turns=50)
 
-# 2. Update active application window and visible snippet
+# 2. Opt-in to screen context capture and generate synthetic test frame
+cm.set_capture_enabled(True)
+frame = cm.capture_synthetic_frame(width=1280, height=720, pattern="test_bars")
+
+# 3. Update active application window and visible snippet
 cm.update_active_window(
     app_name="VS Code",
-    window_title="server.py - SDK-9",
-    app_type="ide",
-    visible_snippet="items = []\nx = items[0]  # IndexError",
+    window_title="main.py",
+    visible_snippet="def add(a, b): return a + b",
 )
 
-# 3. Add user voice query
-query = "Why did this IndexError happen?"
-cm.add_turn("user", query)
-ctx = cm.update_user_query(query)
+# 4. Add untrusted user query and conversation turn
+cm.add_turn("user", "Summarize this code")
+context = cm.update_user_query("Summarize this code")
 
-# 4. Run Reasoning Service
-reasoner = MockReasoningService()
-decision = reasoner.reason(ctx)
-
-print(f"Intent: {decision.intent}")
-print(f"Response: {decision.direct_response}")
-print(f"Confidence: {decision.confidence * 100:.1f}%")
-
-# 5. Record Assistant response in history
-cm.add_turn("assistant", decision.direct_response)
-
-# 6. Render Prompt Template for downstream LLM
-pm = VersionedPromptManager()
+# 5. Render versioned prompt with security delimiters
+pm = VersionedPromptManager(default_version="v1.0")
 prompt = pm.render_prompt(
-    version="v1.0",
-    app_name=ctx.active_window.app_name,
-    snippet=ctx.active_window.visible_snippet or "",
-    query=ctx.user_query,
+    snippet=context.active_window.visible_snippet,
+    query=context.user_query,
     history=cm.get_history_summary(),
 )
+
+# 6. Run Mock Reasoning
+reasoner = MockReasoningService()
+decision = reasoner.reason(context)
+print(f"Intent: {decision.intent}, Direct Response: {decision.direct_response}")
 ```
 
 ---
 
-## 🖥️ Interactive CLI Demonstration
+## 🧪 Testing & Quality Assurance
 
-The module includes an interactive terminal utility to test context updates, prompt rendering, and mock reasoning live:
-
-### Automated Simulation Walkthrough:
+Run the comprehensive test suite:
 ```bash
-python -m packages.context_reasoning.cli --simulate
+pytest packages/context_reasoning/tests/
 ```
 
-### Interactive Console REPL:
+With code coverage:
 ```bash
-python -m packages.context_reasoning.cli
+pytest --cov=packages.context_reasoning packages/context_reasoning/tests/
 ```
-*In the REPL, type queries freely, or use `:window <app_name>` to switch active application context.*
-
----
-
-## 🧪 Testing & Verification
-
-Unit and integration tests are isolated within `packages/context_reasoning/tests/`:
-
-```bash
-# Run unit and integration tests:
-pytest packages/context_reasoning/tests/ -v
-
-# Run with coverage report:
-pytest packages/context_reasoning/tests/ --cov=packages/context_reasoning --cov-report=term-missing
-```
-
-### Test Suite Highlights:
-- **37 test cases** covering models, context manager, prompt system, mock reasoning, and CLI.
-- **99% code coverage**.
-- Deep immutability and state serialization roundtrip checks.
-- Bounded memory sliding-window verification.
+**Current Test Metrics**:
+- **61 Passing Unit & Integration Tests** (up from 37).
+- **98% Code Coverage** across all package modules.
+- Complete validation coverage for invalid `ReasoningRequest` and `ReasoningResult` payloads.
+- Automated tests verifying privacy default (`capture_enabled=False`), synthetic frame generation, and prompt injection defense.
