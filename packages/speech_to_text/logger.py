@@ -47,6 +47,8 @@ def mask_transcript_text(text: Optional[str]) -> str:
     """Mask transcript text while retaining diagnostic length metadata."""
     if text is None:
         return "[EMPTY_TRANSCRIPT]"
+    if isinstance(text, str) and text.startswith("[REDACTED_TRANSCRIPT"):
+        return text
     cleaned = str(text).strip()
     if not cleaned:
         return "[EMPTY_TRANSCRIPT]"
@@ -57,6 +59,8 @@ def mask_audio_bytes(payload: Union[bytes, bytearray, memoryview, Any]) -> str:
     """Mask audio buffer payload while retaining byte count for debugging."""
     if payload is None:
         return "[EMPTY_AUDIO]"
+    if isinstance(payload, str) and payload.startswith("[REDACTED_AUDIO"):
+        return payload
     if isinstance(payload, (bytes, bytearray, memoryview)):
         return f"[REDACTED_AUDIO: {len(payload)} bytes]"
     if hasattr(payload, "data") and isinstance(payload.data, (bytes, bytearray)):
