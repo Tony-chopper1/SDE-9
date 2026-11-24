@@ -13,7 +13,7 @@ import uuid
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ---------------------------------------------------------------------------
@@ -128,22 +128,29 @@ class PlanStatus(str, Enum):
 class ToolSpec(BaseModel):
     """Specification of an authorized tool in the agentic workflow pipeline.
 
+    Canonical tool contract used throughout the agentic workflow system,
+    including the mock executor and the tool registry.
+
     Attributes:
         name: Dot-namespaced tool identifier (e.g. ``"file.search"``).
         description: Human-readable summary of tool functionality.
         safety_level: Default risk classification governing approval requirements.
         is_idempotent: Whether repeated invocations produce identical results without side-effects.
         parameters: Key-value mapping of parameter names to expected types.
-        required_parameters: List of parameter names that must be provided.
+        required_parameters: Mapping of parameter name to expected type, or list of required names.
+        optional_parameters: Key-value mapping of optional parameter names to expected types.
         permission_scope: Required permission boundary to invoke this tool.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
     description: str = ""
     safety_level: SafetyLevel = SafetyLevel.A
     is_idempotent: bool = True
     parameters: Dict[str, Any] = Field(default_factory=dict)
-    required_parameters: List[str] = Field(default_factory=list)
+    required_parameters: Union[Dict[str, Any], List[str]] = Field(default_factory=dict)
+    optional_parameters: Dict[str, Any] = Field(default_factory=dict)
     permission_scope: PermissionScope = PermissionScope.READ_ONLY
 
 
