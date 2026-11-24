@@ -1,6 +1,6 @@
 # Speech-to-Text & Segment Accumulator Module (`packages/speech_to_text/`)
 
-> **Owner**: Pavanchand RM (Team Lead) · Branch: `feature/pavan-week3`  
+> **Owner**: Pavanchand RM (Team Lead) · Branch: `feature/pavan-week4`  
 > **Task**: Week 3 (Days 15–21) – Session Revision & Finalization, Confidence Thresholds, Cancellation, Fallback & Backend Event Stream Integration
 
 ---
