@@ -44,7 +44,8 @@ DEFAULT_TOOL_SPECS: List[ToolSpec] = [
         safety_level=SafetyLevel.A,
         is_idempotent=True,
         parameters={"pattern": "str", "directory": "str", "max_results": "int"},
-        required_parameters=[],
+        required_parameters={},
+        optional_parameters={"pattern": str, "directory": str, "max_results": int},
     ),
     ToolSpec(
         name="calc.evaluate",
@@ -52,7 +53,8 @@ DEFAULT_TOOL_SPECS: List[ToolSpec] = [
         safety_level=SafetyLevel.A,
         is_idempotent=True,
         parameters={"expression": "str"},
-        required_parameters=["expression"],
+        required_parameters={"expression": str},
+        optional_parameters={},
     ),
 ]
 
