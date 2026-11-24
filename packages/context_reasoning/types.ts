@@ -107,3 +107,50 @@ export interface ReasoningResult {
   reasoningSteps?: string[];
   metadata?: Record<string, unknown>;
 }
+
+export interface VisionRegion {
+  regionId: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+  textContent?: string;
+}
+
+export interface VisionResult {
+  frameId: string;
+  extractedText: string;
+  regions: VisionRegion[];
+  confidence: number;
+  processingTimeMs: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface LLMResponse {
+  content: string;
+  rawJson?: Record<string, unknown>;
+  structuredData?: unknown;
+  modelName: string;
+  latencyMs: number;
+  retriesUsed: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CaptureConfig {
+  captureEnabled: boolean;
+  maxFps: number;
+  maxWidth: number;
+  maxHeight: number;
+  maxBytes: number;
+  downscaleOnOverflow: boolean;
+}
+
+export interface ContextBuilderConfig {
+  tokenBudget: number;
+  maxHistoryTurns: number;
+  staleThresholdSeconds: number;
+  screenStaleSeconds: number;
+  relevanceThreshold: number;
+}
