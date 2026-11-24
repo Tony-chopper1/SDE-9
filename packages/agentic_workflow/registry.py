@@ -7,10 +7,9 @@ and validates caller permission scopes before execution.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Collection, Dict, Optional, Set
+from typing import Any, Collection, Dict, List, Optional, Set
 
-from packages.agentic_workflow.models import PermissionScope, SafetyLevel
+from packages.agentic_workflow.models import PermissionScope, SafetyLevel, ToolSpec
 from packages.agentic_workflow.validator import PlanValidationError
 
 
@@ -52,34 +51,6 @@ class PermissionDeniedError(Exception):
             f"Permission denied for tool '{tool_name}'. "
             f"Required scope: '{required_scope.value}', granted: [{granted_str}]"
         )
-
-
-# ---------------------------------------------------------------------------
-# Tool Specification
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ToolSpec:
-    """Specification defining permissions, idempotency, and parameter schema for a tool.
-
-    Attributes:
-        name: Dot-namespaced tool identifier.
-        permission_scope: Minimal permission boundary required.
-        is_idempotent: Whether repeated invocations produce identical side-effects.
-        safety_level: Default risk classification.
-        required_parameters: Dict of parameter name to expected Python type.
-        optional_parameters: Dict of parameter name to expected Python type.
-        description: Human-readable description of tool capabilities.
-    """
-
-    name: str
-    permission_scope: PermissionScope
-    is_idempotent: bool
-    safety_level: SafetyLevel
-    required_parameters: Dict[str, type] = field(default_factory=dict)
-    optional_parameters: Dict[str, type] = field(default_factory=dict)
-    description: str = ""
 
 
 # ---------------------------------------------------------------------------

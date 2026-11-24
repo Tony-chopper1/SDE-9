@@ -121,13 +121,13 @@ class TestToolSpec:
             safety_level=SafetyLevel.A,
             is_idempotent=True,
             parameters={"query": "str"},
-            required_parameters=["query"],
+            required_parameters={"query": str},
         )
         assert spec.name == "custom.tool"
         assert spec.description == "A test tool spec"
         assert spec.safety_level == SafetyLevel.A
         assert spec.is_idempotent is True
-        assert spec.required_parameters == ["query"]
+        assert spec.required_parameters == {"query": str}
 
     def test_default_specs_registered(self):
         names = [spec.name for spec in DEFAULT_TOOL_SPECS]

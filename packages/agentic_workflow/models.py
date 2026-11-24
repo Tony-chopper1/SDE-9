@@ -128,13 +128,20 @@ class PlanStatus(str, Enum):
 class ToolSpec(BaseModel):
     """Specification of an authorized tool in the agentic workflow pipeline.
 
+    This is the single canonical definition of a tool contract, used by both
+    the mock executor and the tool registry.  ``registry.py`` imports this
+    class directly — do **not** redefine it elsewhere.
+
     Attributes:
         name: Dot-namespaced tool identifier (e.g. ``"file.search"``).
         description: Human-readable summary of tool functionality.
         safety_level: Default risk classification governing approval requirements.
         is_idempotent: Whether repeated invocations produce identical results without side-effects.
-        parameters: Key-value mapping of parameter names to expected types.
-        required_parameters: List of parameter names that must be provided.
+        parameters: Loose key-value mapping of parameter names to type strings (informational).
+        required_parameters: Mapping of parameter name → expected Python type used for
+            schema validation.  An empty dict means no parameters are required.
+        optional_parameters: Mapping of parameter name → expected Python type for
+            parameters that may optionally be supplied.
         permission_scope: Required permission boundary to invoke this tool.
     """
 
@@ -143,7 +150,8 @@ class ToolSpec(BaseModel):
     safety_level: SafetyLevel = SafetyLevel.A
     is_idempotent: bool = True
     parameters: Dict[str, Any] = Field(default_factory=dict)
-    required_parameters: List[str] = Field(default_factory=list)
+    required_parameters: Dict[str, Any] = Field(default_factory=dict)
+    optional_parameters: Dict[str, Any] = Field(default_factory=dict)
     permission_scope: PermissionScope = PermissionScope.READ_ONLY
 
 
