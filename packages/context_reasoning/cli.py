@@ -2,7 +2,8 @@
 Interactive CLI Demonstration Tool for Context & Reasoning.
 
 Provides a terminal interface to inspect active application context, render
-versioned prompts, and run mock LLM reasoning decisions.
+versioned prompts, capture synthetic frames, run OCR processing, assemble bounded
+contexts, and execute mock LLM reasoning decisions with structured validation.
 
 Usage:
     python -m packages.context_reasoning.cli
@@ -14,9 +15,20 @@ import argparse
 import sys
 import time
 
+from packages.context_reasoning.capture_adapter import CaptureAdapter
+from packages.context_reasoning.context_builder import ContextBuilder
 from packages.context_reasoning.context_manager import ContextManager
-from packages.context_reasoning.prompt_manager import VersionedPromptManager
+from packages.context_reasoning.llm_adapter import LLMAdapter
 from packages.context_reasoning.mock_reasoning import MockReasoningService
+from packages.context_reasoning.models import (
+    CaptureConfig,
+    ContextBuilderConfig,
+    ContextItem,
+    ReasoningResult,
+    SourceReference,
+)
+from packages.context_reasoning.prompt_manager import VersionedPromptManager
+from packages.context_reasoning.vision_adapter import MockVisionAdapter
 
 
 def run_simulation() -> None:
@@ -80,7 +92,7 @@ def run_simulation() -> None:
     print(f"    Response:      {result_b.direct_response}")
 
     # 5. Render Versioned Prompt
-    print("\n[5] Rendering Versioned Prompt Template ('v1.0'):")
+    print("\n[5] Rendering Versioned Prompt Template ('v1.0') with Security Delimiters:")
     rendered = pm.render_prompt(
         version="v1.0",
         app_name=ctx_b.active_window.app_name,
@@ -89,23 +101,74 @@ def run_simulation() -> None:
         history=cm.get_history_summary(),
     )
     print("-" * 50)
-    print(rendered[:400] + "\n... [truncated for display] ...")
+    print(rendered[:350] + "\n... [truncated for display] ...")
     print("-" * 50)
 
-    print("\n[✔] Simulation complete. Context, history, and reasoning decisions verified.\n")
+    # 6. Week 2 Feature Demo: Opt-in Screen Capture Adapter
+    print("\n[6] Week 2 Opt-in Screen Capture Adapter:")
+    capture_adapter = CaptureAdapter(CaptureConfig(capture_enabled=False))
+    print(f"    Initial state: capture_enabled = {capture_adapter.is_enabled()} (Privacy Default)")
+    capture_adapter.enable()
+    print(f"    Opt-in enabled: capture_enabled = {capture_adapter.is_enabled()}")
+    frame = capture_adapter.capture_frame(
+        width=1280,
+        height=720,
+        visible_text="def compute_metrics(data): return len(data)",
+    )
+    print(f"    Synthetic Frame Captured: id={frame.frame_id}, dims={frame.width}x{frame.height}, is_synthetic={frame.is_synthetic}")
+
+    # 7. Week 2 Feature Demo: Mock Vision / OCR Adapter
+    print("\n[7] Week 2 Mock Vision / OCR Adapter:")
+    vision_adapter = MockVisionAdapter()
+    vision_result = vision_adapter.process_frame(frame)
+    print(f"    Extracted Text: {vision_result.extracted_text}")
+    print(f"    Detected Regions: {[r.label for r in vision_result.regions]}")
+    print(f"    Confidence: {vision_result.confidence * 100:.1f}% in {vision_result.processing_time_ms}ms")
+
+    # 8. Week 2 Feature Demo: Bounded Context Builder
+    print("\n[8] Week 2 Bounded Context Builder (Token Budget & Stale Filtering):")
+    ctx_b.screen_context = frame
+    ctx_b.context_items.append(
+        ContextItem(
+            content="Documentation on running unit tests with pytest",
+            source=SourceReference(source_id="docs/testing.md", is_trusted=True),
+            is_trusted=True,
+        )
+    )
+    builder = ContextBuilder(ContextBuilderConfig(token_budget=1024))
+    bounded_request = builder.build_context(ctx_b)
+    meta = bounded_request.metadata
+    print(f"    Allocated Token Budget: {meta.get('token_budget')} tokens")
+    print(f"    Tokens Used:           {meta.get('approximate_tokens_used')} tokens")
+    print(f"    History Turns Retained:{meta.get('history_turns_retained')}")
+    print(f"    Context Items Retained:{meta.get('items_retained')}")
+
+    # 9. Week 2 Feature Demo: Resilient LLM Adapter
+    print("\n[9] Week 2 Resilient LLM Adapter with Structured Output Validation:")
+    llm_adapter = LLMAdapter()
+    llm_resp = llm_adapter.invoke("Search for *.py in repository", schema=ReasoningResult)
+    structured = llm_resp.structured_data
+    if isinstance(structured, ReasoningResult):
+        print(f"    Model:      {llm_resp.model_name}")
+        print(f"    Validated:  Intent='{structured.intent}', Tool='{structured.planned_tool_name}'")
+        print(f"    Latency:    {llm_resp.latency_ms}ms (retries={llm_resp.retries_used})")
+
+    print("\n[✔] Simulation complete. Week 1 & Week 2 Context & Reasoning verified.\n")
 
 
 def run_interactive() -> None:
     """Run an interactive console REPL for testing arbitrary queries and window contexts."""
     session_id = f"interactive-{int(time.time())}"
     cm = ContextManager(session_id=session_id)
-    pm = VersionedPromptManager()
     reasoner = MockReasoningService()
+    builder = ContextBuilder()
+    llm_adapter = LLMAdapter()
 
     print("=" * 60)
-    print("  SDK-9 Context & Reasoning Interactive REPL")
+    print("  SDK-9 Context & Reasoning Interactive REPL (Week 2)")
     print("  Type 'quit' or 'exit' to stop.")
     print("  Type ':window <app_name>' to change active application.")
+    print("  Type ':capture' to toggle synthetic screen capture.")
     print("=" * 60)
 
     while True:
@@ -127,9 +190,19 @@ def run_interactive() -> None:
             print(f"[*] Updated active app to: {new_app}")
             continue
 
+        if query.lower() == ":capture":
+            new_state = not cm.is_capture_enabled()
+            cm.set_capture_enabled(new_state)
+            print(f"[*] Screen Capture is now: {'ENABLED' if new_state else 'DISABLED'}")
+            if new_state:
+                frame = cm.capture_synthetic_frame()
+                print(f"[*] Captured synthetic frame: id={frame.frame_id}")
+            continue
+
         cm.add_turn("user", query)
-        ctx = cm.update_user_query(query)
-        decision = reasoner.reason(ctx)
+        raw_ctx = cm.update_user_query(query)
+        bounded_req = builder.build_context(raw_ctx)
+        decision = reasoner.reason(bounded_req)
 
         print(f"\n[Reasoning Decision]")
         print(f"  Intent:        {decision.intent}")
