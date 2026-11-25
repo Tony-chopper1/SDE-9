@@ -13,7 +13,7 @@ import hmac
 import os
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Body
 from pydantic import BaseModel, Field
 
 from backend.api.sessions import session_service
@@ -34,6 +34,93 @@ class PipelineRequest(BaseModel):
         max_length=1400000,
         description="Optional Base64-encoded mock audio",
     )
+
+
+PIPELINE_RESPONSE_EXAMPLE = {
+    "success": True,
+    "data": {
+        "session_id": "123e4567-e89b-12d3-a456-426614174000",
+        "correlation_id": "123e4567-e89b-12d3-a456-426614174001",
+        "mock_mode": True,
+        "audio": {
+            "received_bytes": 6400,
+            "frame_bytes": 320,
+            "speech_detected": True,
+            "vad_confidence": 1.0,
+        },
+        "transcription": {
+            "text": "No speech detected",
+            "segments": [],
+        },
+        "reasoning": {
+            "intent": "general",
+            "requires_tool": False,
+            "planned_tool_name": None,
+            "tool_parameters": None,
+            "direct_response": "Mock response",
+            "confidence": 0.95,
+        },
+        "workflow": {
+            "status": "not_required",
+            "tool_name": None,
+            "permission_granted": False,
+            "approval_required": False,
+            "plan_created": False,
+        },
+    },
+    "error": None,
+    "timestamp": 1795590000.0,
+}
+
+ERROR_EXAMPLE = {
+    "success": False,
+    "data": None,
+    "error": {
+        "code": "HTTP_400",
+        "message_safe_for_user": "Bad request",
+        "retryable": False,
+        "correlation_id": "123e4567-e89b-12d3-a456-426614174001",
+        "details_redacted": None,
+    },
+    "timestamp": 1795590000.0,
+}
+
+AUTH_ERROR_EXAMPLE = {
+    **ERROR_EXAMPLE,
+    "error": {
+        **ERROR_EXAMPLE["error"],
+        "code": "HTTP_401",
+        "message_safe_for_user": "Authentication required",
+    },
+}
+
+NOT_FOUND_ERROR_EXAMPLE = {
+    **ERROR_EXAMPLE,
+    "error": {
+        **ERROR_EXAMPLE["error"],
+        "code": "HTTP_404",
+        "message_safe_for_user": "Session not found",
+    },
+}
+
+RATE_LIMIT_ERROR_EXAMPLE = {
+    **ERROR_EXAMPLE,
+    "error": {
+        **ERROR_EXAMPLE["error"],
+        "code": "HTTP_429",
+        "message_safe_for_user": "Too many requests",
+        "retryable": True,
+    },
+}
+
+VALIDATION_ERROR_EXAMPLE = {
+    **ERROR_EXAMPLE,
+    "error": {
+        **ERROR_EXAMPLE["error"],
+        "code": "HTTP_422",
+        "message_safe_for_user": "Invalid request body",
+    },
+}
 
 
 def verify_pipeline_authorization(api_key: str | None) -> None:
@@ -59,18 +146,92 @@ def verify_pipeline_authorization(api_key: str | None) -> None:
         )
 
 
-@router.post("/pipeline/process", response_model=StandardResponse)
+@router.post(
+    "/pipeline/process",
+    response_model=StandardResponse,
+    summary="Process audio through the mock pipeline",
+    description=(
+        "Processes optional Base64 audio through Audio/VAD, "
+        "Speech-to-Text, Context/Reasoning and Agentic Workflow. "
+        "The mock pipeline does not execute tools."
+    ),
+    responses={
+        200: {
+            "description": "Pipeline processed successfully",
+            "content": {
+                "application/json": {
+                    "example": PIPELINE_RESPONSE_EXAMPLE,
+                }
+            },
+        },
+        400: {
+            "description": "Invalid audio input",
+            "content": {
+                "application/json": {
+                    "example": ERROR_EXAMPLE,
+                }
+            },
+        },
+        401: {
+            "description": "Authentication required when API key is configured",
+            "content": {
+                "application/json": {
+                    "example": AUTH_ERROR_EXAMPLE,
+                }
+            },
+        },
+        404: {
+            "description": "Session not found",
+            "content": {
+                "application/json": {
+                    "example": NOT_FOUND_ERROR_EXAMPLE,
+                }
+            },
+        },
+        429: {
+            "description": "Pipeline rate limit exceeded",
+            "content": {
+                "application/json": {
+                    "example": RATE_LIMIT_ERROR_EXAMPLE,
+                }
+            },
+        },
+        422: {
+            "description": "Invalid request body",
+            "content": {
+                "application/json": {
+                    "example": VALIDATION_ERROR_EXAMPLE,
+                }
+            },
+        },
+    },
+)
 def process_pipeline(
-    payload: PipelineRequest,
-    request: Request,
+    payload: PipelineRequest = Body(
+        ...,
+        openapi_examples={
+            "mock_audio_request": {
+                "summary": "Process mock audio",
+                "value": {
+                    "session_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "audio_base64": "AQEBAQ==",
+                },
+            },
+            "without_audio": {
+                "summary": "Process using default mock audio",
+                "value": {
+                    "session_id": "123e4567-e89b-12d3-a456-426614174000",
+                },
+            },
+        },
+    ),
+    request: Request = None,
     x_api_key: str | None = Header(default=None),
 ):
     """Process audio through the complete mock pipeline."""
 
-    # 1. Authorization boundary
     verify_pipeline_authorization(x_api_key)
 
-    # 2. Verify session
     session = session_service.get_session(payload.session_id)
 
     if session is None:
@@ -79,7 +240,6 @@ def process_pipeline(
             detail="Session not found",
         )
 
-    # 3. Decode optional Base64 audio
     audio_data = None
 
     if payload.audio_base64 is not None:
@@ -100,7 +260,6 @@ def process_pipeline(
                 detail="Audio input cannot be empty",
             )
 
-    # 4. Execute mock pipeline
     try:
         result = pipeline_service.process_audio(
             session_id=payload.session_id,
