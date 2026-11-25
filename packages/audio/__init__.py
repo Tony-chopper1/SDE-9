@@ -65,6 +65,13 @@ from packages.audio.models import (
     VADResult,
     VADState,
 )
+from packages.audio.profiler import (
+    AudioProfiler,
+    LatencyStats,
+    MemoryStats,
+    ProfileReport,
+    profile_audio_pipeline,
+)
 from packages.audio.vad import (
     BaseVAD,
     EnergyVAD,
@@ -114,6 +121,12 @@ __all__ = [
     # Audio-to-STT Bridge (Week 3 D19-20)
     "AudioSTTBridge",
     "MultiSessionSTTBridge",
+    # Profiling & Diagnostics (Week 4 D22-24)
+    "AudioProfiler",
+    "ProfileReport",
+    "LatencyStats",
+    "MemoryStats",
+    "profile_audio_pipeline",
     # Error envelope exceptions
     "AudioError",
     "AudioConfigError",

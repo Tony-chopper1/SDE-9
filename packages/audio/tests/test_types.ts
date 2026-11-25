@@ -7,6 +7,7 @@ import {
   APPROVED_TEAM_DEFAULTS,
   AudioEventType,
   PROVISIONAL_STT_SETTINGS,
+  StreamState,
   SUPPORTED_SAMPLE_RATES,
   VADState,
   isAudioConfig,
@@ -128,4 +129,10 @@ assert(AudioEventType.SPEECH_START === 'audio.vad.speech_start', 'AudioEventType
 assert(AudioEventType.SPEECH_END === 'audio.vad.speech_end', 'AudioEventType.SPEECH_END matches');
 assert(AudioEventType.AUDIO_CHUNK === 'audio.chunk', 'AudioEventType.AUDIO_CHUNK matches');
 
-console.log('All TypeScript type tests passed successfully (8/8 assertions verified).');
+// 9. Verify StreamState values (Week 4 D22-24)
+assert(StreamState.IDLE === 'IDLE', 'StreamState.IDLE matches');
+assert(StreamState.RUNNING === 'RUNNING', 'StreamState.RUNNING matches');
+assert(StreamState.PAUSED === 'PAUSED', 'StreamState.PAUSED matches');
+assert(StreamState.STOPPED === 'STOPPED', 'StreamState.STOPPED matches');
+
+console.log('All TypeScript type tests passed successfully (9/9 assertions verified).');

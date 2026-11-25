@@ -82,6 +82,31 @@ export type VADState = (typeof VADState)[keyof typeof VADState];
 export type VADStateString = VADState;
 
 // ============================================================================
+// Stream Lifecycle & Capture States (Week 2 & Week 4)
+// ============================================================================
+
+/**
+ * Stream lifecycle states matching Python packages.audio.lifecycle.StreamState.
+ */
+export const StreamState = {
+  IDLE: 'IDLE',
+  READY: 'IDLE',
+  RUNNING: 'RUNNING',
+  PAUSED: 'PAUSED',
+  STOPPED: 'STOPPED',
+  ERROR: 'ERROR',
+  DEVICE_LOST: 'DEVICE_LOST',
+} as const;
+
+export type StreamState = (typeof StreamState)[keyof typeof StreamState];
+
+/**
+ * UI-friendly capture state derived from StreamState.
+ * Compatible with frontend VoiceControls indicator.
+ */
+export type CaptureState = 'idle' | 'recording' | 'paused' | 'error';
+
+// ============================================================================
 // Audio Event Types (Week 3 D15-16)
 // ============================================================================
 

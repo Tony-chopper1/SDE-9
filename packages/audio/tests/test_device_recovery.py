@@ -798,3 +798,218 @@ def test_paused_stream_read_frame_behavior():
     controller.stop()
 
 
+def test_repeated_rapid_device_disconnect_and_recovery_cycles():
+    """Stress Test (Week 4 Phase 2): 10 consecutive device disconnect/reconnect cycles during streaming.
+
+    Verifies:
+    1. Stream repeatedly transitions: RUNNING -> DEVICE_LOST -> RUNNING across 10 cycles.
+    2. Audio frames successfully read after each recovery.
+    3. Exactly 10 'audio.device.lost' and 10 'audio.device.recovered' event envelopes emitted.
+    4. Session ID and Correlation ID strictly preserved across all 20 lifecycle events.
+    5. Clean final shutdown without deadlocks, lingering threads, or state corruption.
+    """
+    adapter = _create_mock_adapter()
+    adapter.select_device("mic-primary")
+
+    dispatcher = AudioEventDispatcher()
+    events: List[EventEnvelope] = []
+    dispatcher.subscribe(lambda e: events.append(e))
+
+    sess_id = "sess-stress-10-cycles"
+    corr_id = "corr-stress-10-cycles"
+
+    pipeline = AudioSessionPipeline(
+        session_id=sess_id,
+        correlation_id=corr_id,
+        dispatcher=dispatcher,
+    )
+    controller = StreamLifecycleController(
+        device_adapter=adapter,
+        session_id=sess_id,
+        correlation_id=corr_id,
+        pipeline=pipeline,
+        event_dispatcher=dispatcher,
+    )
+
+    controller.start()
+    assert controller.state == StreamState.RUNNING
+
+    for cycle in range(10):
+        # 1. Read a frame during normal streaming
+        f_before = controller.read_frame()
+        assert f_before is not None
+        pipeline.process_frame(f_before)
+
+        # 2. Induce device disconnect
+        adapter.set_device_availability("mic-primary", False)
+        lost_read = controller.read_frame()
+        assert lost_read is None
+        assert controller.state == StreamState.DEVICE_LOST
+        assert controller.is_device_lost is True
+
+        # 3. Restore device hardware and reconnect
+        adapter.set_device_availability("mic-primary", True)
+        reconnect_ok = controller.reconnect(target_device_id="mic-primary")
+        assert reconnect_ok is True
+        assert controller.state == StreamState.RUNNING
+        assert controller.is_device_lost is False
+
+        # 4. Read frame after recovery
+        f_after = controller.read_frame()
+        assert f_after is not None
+        pipeline.process_frame(f_after)
+
+    controller.stop()
+    assert controller.state == StreamState.STOPPED
+
+    # Verify event counts
+    lost_events = [e for e in events if e.event_type == AudioEventType.DEVICE_LOST.value]
+    rec_events = [e for e in events if e.event_type == AudioEventType.DEVICE_RECOVERED.value]
+
+    assert len(lost_events) == 10
+    assert len(rec_events) == 10
+
+    # Verify session and correlation IDs across all events
+    for e in lost_events + rec_events:
+        assert e.session_id == sess_id
+        assert e.correlation_id == corr_id
+
+
+def test_repeated_device_failure_with_fallback_and_cancellation_cleanup():
+    """Stress Test (Week 4 Phase 2): Sequential cascading device failures followed by cancellation.
+
+    Verifies:
+    1. Initial device 'mic-primary' fails -> fallback to 'mic-headset'.
+    2. 'mic-headset' fails -> fallback to 'mic-backup'.
+    3. 'mic-backup' fails -> all devices exhausted -> cancel().
+    4. Cancellation terminates all pending reads, drains/closes internal structures,
+       and transitions to STOPPED.
+    5. Zero frames emitted post-cancellation.
+    """
+    adapter = _create_mock_adapter()
+    adapter.select_device("mic-primary")
+
+    dispatcher = AudioEventDispatcher()
+    events: List[EventEnvelope] = []
+    dispatcher.subscribe(lambda e: events.append(e))
+
+    controller = StreamLifecycleController(
+        device_adapter=adapter,
+        event_dispatcher=dispatcher,
+    )
+    controller.start()
+
+    # Step 1: mic-primary fails
+    adapter.set_device_availability("mic-primary", False)
+    assert controller.read_frame() is None
+    assert controller.state == StreamState.DEVICE_LOST
+
+    # Fallback to mic-headset
+    assert controller.reconnect(target_device_id="mic-headset") is True
+    assert controller.state == StreamState.RUNNING
+    assert controller.active_device_id == "mic-headset"
+    f1 = controller.read_frame()
+    assert f1 is not None
+
+    # Step 2: mic-headset fails
+    adapter.set_device_availability("mic-headset", False)
+    assert controller.read_frame() is None
+    assert controller.state == StreamState.DEVICE_LOST
+
+    # Fallback to mic-backup
+    assert controller.reconnect(target_device_id="mic-backup") is True
+    assert controller.state == StreamState.RUNNING
+    assert controller.active_device_id == "mic-backup"
+    f2 = controller.read_frame()
+    assert f2 is not None
+
+    # Step 3: mic-backup fails
+    adapter.set_device_availability("mic-backup", False)
+    assert controller.read_frame() is None
+    assert controller.state == StreamState.DEVICE_LOST
+
+    # No devices left to recover
+    assert controller.reconnect() is False
+    assert controller.state == StreamState.DEVICE_LOST
+
+    # Cancel session
+    controller.cancel(reason="all_microphones_failed")
+    assert controller.state == StreamState.STOPPED
+    assert controller.is_cancelled is True
+
+    # Zero frames emitted post-cancellation
+    assert controller.read_frame() is None
+    assert list(controller.stream()) == []
+
+    # Verify cancellation event emitted
+    cancel_events = [e for e in events if e.event_type == AudioEventType.STREAM_CANCELLED.value]
+    assert len(cancel_events) == 1
+    assert cancel_events[0].payload.get("reason") == "all_microphones_failed"
+
+
+def test_event_dispatcher_listener_unsubscribe_and_leak_prevention():
+    """Stress & Cleanup Test (Week 4 Phase 2): Listener subscription, selective unsubscribe, and cleanup.
+
+    Verifies:
+    1. Multiple subscribers (20 listeners) register and receive events.
+    2. Unsubscribing a subset cleanly removes only those subscribers without affecting remaining.
+    3. Complete unsubscription of all listeners leaves zero remaining callbacks.
+    4. Dispatcher clear() clears event history and releases all stored event references.
+    """
+    dispatcher = AudioEventDispatcher()
+    call_counts = [0] * 20
+    handlers = []
+
+    for idx in range(20):
+        def make_handler(i):
+            def handler(e):
+                call_counts[i] += 1
+            return handler
+        h = make_handler(idx)
+        handlers.append(h)
+        dispatcher.subscribe(h)
+
+    # Dispatch event 1
+    env1 = EventEnvelope.create(
+        event_type=AudioEventType.AUDIO_CHUNK.value,
+        session_id="s-clean",
+        correlation_id="c-clean",
+        payload={"seq": 1},
+    )
+    dispatcher.dispatch(env1)
+    assert call_counts == [1] * 20
+
+    # Unsubscribe the first 10 handlers
+    for i in range(10):
+        assert dispatcher.unsubscribe(handlers[i]) is True
+
+    # Dispatch event 2
+    env2 = EventEnvelope.create(
+        event_type=AudioEventType.AUDIO_CHUNK.value,
+        session_id="s-clean",
+        correlation_id="c-clean",
+        payload={"seq": 2},
+    )
+    dispatcher.dispatch(env2)
+    # First 10 should still be 1; remaining 10 should now be 2
+    assert call_counts[:10] == [1] * 10
+    assert call_counts[10:] == [2] * 10
+
+    # Unsubscribe remaining handlers
+    for i in range(10, 20):
+        assert dispatcher.unsubscribe(handlers[i]) is True
+
+    # Unsubscribing an already removed handler returns False
+    assert dispatcher.unsubscribe(handlers[0]) is False
+
+    # Dispatch event 3: none should receive it
+    dispatcher.dispatch(env2)
+    assert call_counts[:10] == [1] * 10
+    assert call_counts[10:] == [2] * 10
+
+    # History cleanup
+    assert len(dispatcher.history) == 3
+    dispatcher.clear()
+    assert len(dispatcher.history) == 0
+
+
