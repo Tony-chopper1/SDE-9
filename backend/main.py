@@ -28,7 +28,6 @@ from backend.schemas.api_schemas import (
 
 load_dotenv()
 
-# Configuration
 mock_mode_value = os.getenv("MOCK_MODE", "true").strip().lower()
 
 if mock_mode_value not in {"true", "1", "yes", "false", "0", "no"}:
@@ -45,8 +44,6 @@ app = FastAPI(
 
 app.state.mock_mode = mock_mode_value in {"true", "1", "yes"}
 
-# In-memory rate limiter.
-# Limit applies to each client IP on the pipeline endpoint.
 app.state.rate_limit_requests = {}
 app.state.rate_limit_max = 120
 app.state.rate_limit_window = 60
@@ -91,7 +88,6 @@ def create_error_response(
     )
 
 
-# Request logging, ID propagation and pipeline rate limiting.
 @app.middleware("http")
 async def request_logging_middleware(
     request: Request,
@@ -162,7 +158,6 @@ async def request_logging_middleware(
     return response
 
 
-# HTTP exception handler
 @app.exception_handler(HTTPException)
 async def http_exception_handler(
     request: Request,
@@ -191,7 +186,6 @@ async def http_exception_handler(
     )
 
 
-# Request validation exception handler
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
     request: Request,
@@ -217,7 +211,6 @@ async def validation_exception_handler(
     )
 
 
-# Unexpected exception handler
 @app.exception_handler(Exception)
 async def unexpected_exception_handler(
     request: Request,
@@ -243,7 +236,6 @@ async def unexpected_exception_handler(
     )
 
 
-# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -252,14 +244,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Register API routers
 app.include_router(session_router)
 app.include_router(event_router)
 app.include_router(pipeline_router)
 
 
-# Component health aggregation
 def get_component_health():
     components = {
         "audio": "packages.audio",
@@ -284,8 +273,74 @@ def get_component_health():
     return results
 
 
-# Health check endpoint
-@app.get("/api/v1/health", response_model=StandardResponse)
+HEALTH_EXAMPLE = {
+    "success": True,
+    "data": {
+        "status": "healthy",
+        "service": "sdk-9-voicebot",
+        "mock_mode": True,
+        "components": {
+            "audio": "healthy",
+            "speech_to_text": "healthy",
+            "context_reasoning": "healthy",
+            "agentic_workflow": "healthy",
+            "pipeline": "healthy",
+        },
+    },
+    "error": None,
+    "timestamp": 1795590000.0,
+}
+
+
+READY_EXAMPLE = {
+    "success": True,
+    "data": {
+        "status": "ready",
+        "service": "sdk-9-voicebot",
+        "mock_mode": True,
+        "components": {
+            "audio": "healthy",
+            "speech_to_text": "healthy",
+            "context_reasoning": "healthy",
+            "agentic_workflow": "healthy",
+            "pipeline": "healthy",
+        },
+    },
+    "error": None,
+    "timestamp": 1795590000.0,
+}
+
+
+ERROR_EXAMPLE = {
+    "success": False,
+    "data": None,
+    "error": {
+        "code": "HTTP_501",
+        "message_safe_for_user": "This feature is not implemented yet",
+        "retryable": False,
+        "correlation_id": "123e4567-e89b-12d3-a456-426614174001",
+        "details_redacted": None,
+    },
+    "timestamp": 1795590000.0,
+}
+
+
+@app.get(
+    "/api/v1/health",
+    response_model=StandardResponse,
+    summary="Check service health",
+    description="Checks the availability of backend components.",
+    responses={
+        200: {
+            "description": "Health status",
+            "content": {
+                "application/json": {
+                    "example": HEALTH_EXAMPLE,
+                }
+            },
+        },
+    },
+)
 def health_check():
     components = get_component_health()
 
@@ -305,9 +360,38 @@ def health_check():
     )
 
 
-# Readiness endpoints
-@app.get("/api/v1/ready", response_model=StandardResponse)
-@app.get("/ready", response_model=StandardResponse)
+@app.get(
+    "/api/v1/ready",
+    response_model=StandardResponse,
+    summary="Check API readiness",
+    description="Checks whether all required components are ready.",
+    responses={
+        200: {
+            "description": "Readiness status",
+            "content": {
+                "application/json": {
+                    "example": READY_EXAMPLE,
+                }
+            },
+        },
+    },
+)
+@app.get(
+    "/ready",
+    response_model=StandardResponse,
+    summary="Check API readiness",
+    description="Checks whether all required components are ready.",
+    responses={
+        200: {
+            "description": "Readiness status",
+            "content": {
+                "application/json": {
+                    "example": READY_EXAMPLE,
+                }
+            },
+        },
+    },
+)
 def readiness_check():
     components = get_component_health()
 
@@ -327,8 +411,84 @@ def readiness_check():
     )
 
 
-# AI chat endpoint
-@app.post("/api/v1/ai/chat", response_model=StandardResponse)
+@app.post(
+    "/api/v1/ai/chat",
+    response_model=StandardResponse,
+    summary="Send a chat message",
+    description="Chat endpoint reserved for a future implementation.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "chat_request": {
+                            "summary": "Send a message",
+                            "value": {
+                                "session_id": "123e4567-e89b-12d3-a456-426614174000",
+                                "message": "Hello, how can you help me?",
+                                "context_id": None,
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    },
+    responses={
+        200: {
+            "description": "Example of the standard successful chat response format",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "data": {
+                            "request_id": "123e4567-e89b-12d3-a456-426614174001",
+                            "status": "completed",
+                            "response": "Example assistant response",
+                            "requires_approval": False,
+                        },
+                        "error": None,
+                        "timestamp": 1795590000.0,
+                    }
+                }
+            },
+        },
+        501: {
+            "description": "Chat implementation is pending",
+            "content": {
+                "application/json": {
+                    "example": ERROR_EXAMPLE,
+                }
+            },
+        },
+        422: {
+            "description": "Invalid chat request",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": False,
+                        "data": None,
+                        "error": {
+                            "code": "VALIDATION_ERROR",
+                            "message_safe_for_user": "Request validation failed",
+                            "retryable": False,
+                            "correlation_id": "123e4567-e89b-12d3-a456-426614174001",
+                            "details_redacted": {
+                                "errors": [
+                                    {
+                                        "location": ["body", "message"],
+                                        "type": "missing",
+                                    }
+                                ]
+                            },
+                        },
+                        "timestamp": 1795590000.0,
+                    }
+                }
+            },
+        },
+    },
+)
 def chat_endpoint(req: ChatRequest):
     raise HTTPException(
         status_code=501,
@@ -336,7 +496,6 @@ def chat_endpoint(req: ChatRequest):
     )
 
 
-# Application entry point
 if __name__ == "__main__":
     from backend.launcher import run_server
 
