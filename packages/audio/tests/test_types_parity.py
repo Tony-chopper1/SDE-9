@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from packages.audio.events import AudioEventType
+from packages.audio.lifecycle import StreamState
 from packages.audio.models import (
     AudioConfig,
     AudioFrame,
@@ -45,6 +46,14 @@ def test_audio_event_type_enum_parity():
     for evt in AudioEventType:
         pattern = rf"{evt.name}\s*:\s*['\"]{evt.value}['\"]"
         assert re.search(pattern, ts_content), f"AudioEventType.{evt.name} missing or mismatched in types.ts"
+
+
+def test_stream_state_enum_parity():
+    """Verify TypeScript StreamState const object matches Python StreamState enum values."""
+    ts_content = _load_ts_content()
+    for state in StreamState:
+        pattern = rf"{state.name}\s*:\s*['\"]{state.value}['\"]"
+        assert re.search(pattern, ts_content), f"StreamState.{state.name} missing or mismatched in types.ts"
 
 
 def test_audio_config_field_parity():

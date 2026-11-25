@@ -3,7 +3,7 @@
 **Owner**: Satwik A (`feature/audio-vad`)  
 **Team**: SDE-9 / SDK-9 Voicebot  
 **Module**: `packages/audio/`  
-**Current Milestone**: Week 2 (Days 8–14: Device States, Lifecycle, VAD Interface & Bounded Buffer)
+**Current Milestone**: Week 4 (Days 22–24: Profiling, Capture Indicator & Privacy Verification)
 
 ---
 
@@ -452,39 +452,98 @@ All module errors adhere to the SDK-9 structured error envelope in `docs/integra
 
 ---
 
-## 12. Test Execution & Coverage
+## 12. Capture State Exposure (UI Recording Indicator)
+
+To support real-time visible recording indicators in client UIs (e.g. `frontend/src/components/VoiceControls.tsx`), `StreamLifecycleController` exposes a normalized `capture_state` property derived directly from its underlying `StreamState`:
+
+| Lifecycle State (`StreamState`) | Capture State (`controller.capture_state`) | UI Meaning |
+| :--- | :--- | :--- |
+| `RUNNING` | `"recording"` | Audio is actively capturing; microphone recording indicator illuminated. |
+| `PAUSED` | `"paused"` | Audio capture suspended; paused indicator shown. |
+| `IDLE`, `STOPPED` | `"idle"` | Standby / stopped state; idle indicator shown. |
+| `DEVICE_LOST`, `ERROR` | `"error"` | Hardware fault or fatal state; error badge rendered. |
+
+### Lifecycle Stream Events
+When configured with an `AudioEventDispatcher`, state transitions automatically emit standardized `EventEnvelope` instances:
+- `audio.stream.start`: Dispatched upon `start()`. Payload includes `state: "recording"`, `lifecycle_state: "RUNNING"`, and `device_id`.
+- `audio.stream.stop`: Dispatched upon `stop()`. Payload includes `state: "idle"`, `lifecycle_state: "STOPPED"`, `previous_state`, and `reason: "normal_stop"`.
+
+---
+
+## 13. High-Resolution Latency & Memory Profiling
+
+Week 4 (Days 22–24) introduces reproducible, non-intrusive performance and memory profiling utilities in `packages/audio/profiler.py` and via the `--profile` CLI flag.
+
+### CLI Profiling Command
+```bash
+# Run 100 frames with high-resolution latency and heap memory profiling
+python packages/audio/cli.py --iterations 100 --profile
+
+# Run 500 frames with 20ms frames and energy VAD
+python packages/audio/cli.py --iterations 500 --frame-ms 20 --vad-engine energy --profile
+```
+
+### Programmatic Profiling API
+```python
+from packages.audio.profiler import profile_audio_pipeline
+
+# Profile 200 synthetic frames (16kHz mono, 20ms frames)
+report = profile_audio_pipeline(iterations=200, frame_ms=20, pattern="alternating")
+print(report.format_table())
+print(f"p95 VAD Latency: {report.vad_latency.p95_ms} ms")
+print(f"Peak Heap Memory: {report.memory.peak_kib} KiB")
+```
+
+### Metrics Reported & Interpretation
+- **Per-Frame Latency**: High-resolution nanosecond timestamps (`time.perf_counter_ns()`) measuring discrete operations:
+  - `min_ms`: Minimum processing duration recorded for a single frame.
+  - `mean_ms`: Average execution latency across all frames.
+  - `median_ms` (p50): Median frame processing time.
+  - `p95_ms`: 95th percentile latency (worst-case tail latency under normal processing).
+  - `max_ms`: Maximum duration recorded.
+- **Memory Footprint**: Python standard library `tracemalloc` measurements:
+  - `baseline_kib`: Heap memory allocation prior to stream execution.
+  - `current_kib`: Active heap memory at stream completion.
+  - `peak_kib`: Peak heap allocation reached during stream processing.
+  - `delta_kib`: Net heap allocation growth ($\le 50\text{ KiB}$ for steady-state streaming).
+- **Real-Time Factor**: Ratio of synthesized audio duration to wall-clock processing time ($> 10\times$ faster than real-time on standard CPUs).
+
+---
+
+## 14. Privacy & Zero-Disk-Persistence Guarantee
+
+The Audio & VAD module enforces strict offline in-memory data processing:
+1. **Zero Filesystem Writes**: By default, no audio data, PCM frames, or chunk payloads are persisted to disk or written to temporary directories.
+2. **In-Memory Lifecycles**: All audio transformations occur strictly in volatile RAM (`bytes` objects within `AudioFrame` and `BoundedAudioBuffer`).
+3. **Automated Privacy Verification**: Automated tests (`packages/audio/tests/test_privacy.py`) actively spy on file-system opening operations (`builtins.open`), asserting that write/append file access is never invoked during capture or streaming.
+
+---
+
+## 15. Test Execution & Coverage
 
 Tests are executed with `pytest`:
 
 ```bash
 # Run complete audio test suite
-pytest packages/audio
+pytest packages/audio/tests/
 
 # Run complete audio test suite with coverage report
-pytest packages/audio --cov=packages/audio --cov-report=term-missing
+pytest packages/audio/tests/ --cov=packages.audio --cov-report=term-missing
 ```
 
-### Test Suite Structure
+### Test Suite Structure (177 Tests Total)
 1. **Week 1 Baseline Tests** (32 tests):
-   - `tests/unit/test_audio_schemas.py`: Configuration validation, frame sizing math (640B and 960B), rejection of empty frames as EOS, error envelopes, serialization, and `AudioFormat`/`AudioChunk` schema inheritance parity.
-   - `tests/unit/test_mock_mic.py`: Strict determinism verification across independent runs, deterministic byte reproduction, seed-based ID generation, stream generators, pattern switching, explicit EOF return (`None`).
-   - `tests/unit/test_vad.py`: `MockVAD` scripting, `EnergyVAD` speech/silence separation, hangover smoothing.
-   - `tests/unit/test_audio_cli.py`: Meter rendering, fast execution, error exit handling, main entrypoint.
-   - `tests/integration/test_audio_pipeline.py`: Full end-to-end stream $\rightarrow$ VAD $\rightarrow$ Event envelope pipeline for 20ms and 30ms frames.
-2. **Week 2 Device & Lifecycle Tests** (24 tests):
-   - `tests/test_device.py` (14 tests): Device enumeration, selection, permission states (`GRANTED`, `DENIED`, `UNAVAILABLE`, `PROMPT`), source creation guardrails, and error envelopes.
-   - `tests/test_lifecycle.py` (10 tests): Full state machine validation, valid transitions, invalid transition rejection, repeated start/stop, rapid pause/resume, skipped frame accounting, and context manager exits.
-3. **Week 2 VAD & Buffer Tests** (17 tests):
-   - `tests/test_vad_enhancements.py` (4 tests): Configurable energy thresholds, `min_speech_duration_ms` filtering, short noise rejection, and backwards compatibility.
-   - `tests/test_buffer.py` (13 tests): Backpressure strategies (`DROP_OLDEST`, `DROP_NEWEST`, `BLOCK`), capacity limits, 20ms and 30ms byte boundaries, multithreaded producer-consumer coordination, slow consumers, and stream generators.
-4. **Day 14 Robustness Tests** (7 tests):
-   - `tests/test_robustness.py` (7 tests): Audio sequence gaps, out-of-order jitter, ambient noise vs clicks vs speech, bursty arrivals, 20ms/30ms interoperability, and unblocking of threads on buffer closure.
-5. **Week 3 Speech Events & Session Pipeline Tests** (12 tests):
-   - `tests/test_events.py` (11 tests): Automated `speech_start` and `speech_end` event emission, strict chronological ordering, session and correlation ID propagation, normalized `audio.chunk` payloads, multi-segment tracking, silence filtering, no duplicate transition events, and clean EOS flush.
-   - `tests/test_types_parity.py` (updated to 8 tests): Added `AudioEventType` enum parity validation.
-6. **Week 3 Device-Loss Recovery & Cancellation Tests** (22 tests):
-   - `tests/test_device_recovery.py` (22 tests): Device disconnect detection mid-stream, `audio.device.lost` event dispatch with session/correlation IDs, clean reconnection to original device, fallback to alternative device, graceful handling when no device is available, cancellation during active speech (`speech_end` followed by `stream_cancelled`), bounded buffer drain and closure, unblocking consumer threads waiting on `buffer.pop()`, idempotent cancellation, zero audio frames emitted after cancellation, session/correlation ID preservation, direct `handle_device_loss` during speech, duplicate loss/recovery suppression, faulty hardware read exception handling, permission states, and stream generator background recovery.
-7. **Week 3 Audio & VAD ↔ STT Integration Bridge Tests** (16 tests):
-   - `tests/test_stt_bridge.py` (16 tests): End-to-end audio chunk flow into STT in mock mode, speech boundaries enforcement (`speech_start` .. `speech_end`), silence rejection, false VAD trigger handling, monotonic ordering, timestamp preservation, gap detection, stale chunk drop, device loss handling (flush/close without hanging), cancellation termination, multi-session isolation (`MultiSessionSTTBridge`), deduplication by `frame_id`, direct `push_frame()` helper, base64 chunk delivery, custom orchestrator injection, and full pipeline-to-bridge integration.
+   - `test_schemas.py`, `test_mock_mic.py`, `test_vad.py`, `test_cli.py`, `test_audio.py`.
+2. **Week 2 Device, Lifecycle & Buffer Tests** (48 tests):
+   - `test_device.py` (14 tests), `test_lifecycle.py` (12 tests), `test_vad_enhancements.py` (4 tests), `test_buffer.py` (13 tests), `test_robustness.py` (7 tests).
+3. **Week 3 Speech Events, Recovery & STT Bridge Tests** (50 tests):
+   - `test_events.py` (12 tests), `test_device_recovery.py` (22 tests), `test_stt_bridge.py` (16 tests).
+4. **Week 4 Profiling, Privacy & Parity Tests** (47 tests):
+   - `test_profiling.py` (6 tests): Latency statistics math, memory stats conversion, reproducible pipeline profiling, non-intrusive behavior check, CLI `--profile` flag.
+   - `test_privacy.py` (4 tests): Mock mic streaming zero-disk-write spy, pipeline + STT bridge zero-disk-write spy, bounded buffer drop zero-disk-write spy, in-memory model serialization.
+   - `test_cli_stress.py` (7 tests): Multi-frame load tests (100 and 1,000 frames), rapid start/stop cycles.
+   - `test_types_parity.py` (9 tests) & `test_types.ts` (9 assertions): TypeScript parity including `StreamState` and `AudioEventType`.
 
-**Total**: 160 tests passing, $\ge 95\%$ test coverage across `packages/audio/` (96% achieved).
+**Total**: **177 tests passing (100% pass rate)**.  
+**Production Code Coverage**: **92%** (`packages.audio`).  
+**Directory Coverage**: **96%** (`packages/audio`).

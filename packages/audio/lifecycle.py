@@ -166,6 +166,26 @@ class StreamLifecycleController:
     def event_dispatcher(self) -> Optional[Any]:
         return self._event_dispatcher
 
+    @property
+    def capture_state(self) -> str:
+        """UI-friendly capture state string derived from current StreamState.
+
+        Mapping:
+        - RUNNING -> 'recording'
+        - PAUSED -> 'paused'
+        - IDLE / STOPPED -> 'idle'
+        - DEVICE_LOST / ERROR -> 'error'
+        """
+        with self._lock:
+            if self._state == StreamState.RUNNING:
+                return "recording"
+            elif self._state == StreamState.PAUSED:
+                return "paused"
+            elif self._state in (StreamState.IDLE, StreamState.STOPPED):
+                return "idle"
+            else:
+                return "error"
+
     def start(self) -> None:
         """Start capturing audio.
 
@@ -219,6 +239,23 @@ class StreamLifecycleController:
                 except Exception:
                     self._active_device_id = None
                 self._error = None
+
+                # Emit stream start event if dispatcher is configured
+                if self._event_dispatcher is not None and hasattr(self._event_dispatcher, "dispatch"):
+                    try:
+                        env = EventEnvelope.create(
+                            event_type=AudioEventType.STREAM_START.value,
+                            session_id=self.session_id,
+                            correlation_id=self.correlation_id,
+                            payload={
+                                "state": self.capture_state,
+                                "lifecycle_state": self._state.value,
+                                "device_id": self._active_device_id,
+                            },
+                        )
+                        self._event_dispatcher.dispatch(env)
+                    except Exception:
+                        pass
             except Exception as e:
                 self._state = StreamState.ERROR
                 self._error = e
@@ -262,8 +299,27 @@ class StreamLifecycleController:
         with self._lock:
             if self._state == StreamState.STOPPED:
                 return
+            prev_state = self._state
             self._state = StreamState.STOPPED
             self._cleanup_resources()
+
+            # Emit stream stop event if dispatcher is configured
+            if self._event_dispatcher is not None and hasattr(self._event_dispatcher, "dispatch"):
+                try:
+                    env = EventEnvelope.create(
+                        event_type=AudioEventType.STREAM_STOP.value,
+                        session_id=self.session_id,
+                        correlation_id=self.correlation_id,
+                        payload={
+                            "state": self.capture_state,
+                            "lifecycle_state": self._state.value,
+                            "previous_state": prev_state.value,
+                            "reason": "normal_stop",
+                        },
+                    )
+                    self._event_dispatcher.dispatch(env)
+                except Exception:
+                    pass
 
     def _cleanup_resources(self) -> None:
         """Safely close underlying source and release resources without throwing."""

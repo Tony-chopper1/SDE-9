@@ -28,6 +28,7 @@ from packages.audio.device import (
     MockAudioDeviceAdapter,
     PermissionState,
 )
+from packages.audio.events import AudioEventDispatcher, AudioEventType
 from packages.audio.exceptions import DevicePermissionError
 from packages.audio.lifecycle import (
     InvalidStateTransitionError,
@@ -246,3 +247,75 @@ def test_source_factory_failure_handling():
     assert controller.state == StreamState.ERROR
     controller.stop()
     assert controller.state == StreamState.STOPPED
+
+
+def test_capture_state_mapping():
+    """Verify capture_state property derives the UI-friendly status across all StreamStates."""
+    adapter = MockAudioDeviceAdapter()
+    controller = StreamLifecycleController(device_adapter=adapter)
+
+    # 1. IDLE -> 'idle'
+    assert controller.state == StreamState.IDLE
+    assert controller.capture_state == "idle"
+
+    # 2. RUNNING -> 'recording'
+    controller.start()
+    assert controller.state == StreamState.RUNNING
+    assert controller.capture_state == "recording"
+
+    # 3. PAUSED -> 'paused'
+    controller.pause()
+    assert controller.state == StreamState.PAUSED
+    assert controller.capture_state == "paused"
+
+    # 4. Resume to RUNNING -> 'recording'
+    controller.resume()
+    assert controller.capture_state == "recording"
+
+    # 5. STOPPED -> 'idle'
+    controller.stop()
+    assert controller.state == StreamState.STOPPED
+    assert controller.capture_state == "idle"
+
+    # 6. DEVICE_LOST -> 'error'
+    controller._state = StreamState.DEVICE_LOST
+    assert controller.capture_state == "error"
+
+    # 7. ERROR -> 'error'
+    controller._state = StreamState.ERROR
+    assert controller.capture_state == "error"
+
+
+def test_stream_start_and_stop_events_dispatched():
+    """Verify STREAM_START and STREAM_STOP events are emitted through event dispatcher."""
+    adapter = MockAudioDeviceAdapter()
+    dispatcher = AudioEventDispatcher()
+    controller = StreamLifecycleController(
+        device_adapter=adapter,
+        event_dispatcher=dispatcher,
+        session_id="sess-evt-test-001",
+        correlation_id="corr-evt-test-001",
+    )
+
+    # 1. Start stream -> emits STREAM_START
+    controller.start()
+    start_events = dispatcher.get_events(AudioEventType.STREAM_START.value)
+    assert len(start_events) == 1
+    start_env = start_events[0]
+    assert start_env.session_id == "sess-evt-test-001"
+    assert start_env.correlation_id == "corr-evt-test-001"
+    assert start_env.payload["state"] == "recording"
+    assert start_env.payload["lifecycle_state"] == "RUNNING"
+
+    # 2. Stop stream -> emits STREAM_STOP
+    controller.stop()
+    stop_events = dispatcher.get_events(AudioEventType.STREAM_STOP.value)
+    assert len(stop_events) == 1
+    stop_env = stop_events[0]
+    assert stop_env.session_id == "sess-evt-test-001"
+    assert stop_env.correlation_id == "corr-evt-test-001"
+    assert stop_env.payload["state"] == "idle"
+    assert stop_env.payload["lifecycle_state"] == "STOPPED"
+    assert stop_env.payload["previous_state"] == "RUNNING"
+    assert stop_env.payload["reason"] == "normal_stop"
+

@@ -35,6 +35,7 @@ from packages.audio.lifecycle import (
 )
 from packages.audio.mock_mic import MockMicrophoneSource
 from packages.audio.models import AudioConfig, EventEnvelope, VADState
+from packages.audio.profiler import AudioProfiler
 from packages.audio.vad import BaseVAD, EnergyVAD, MockVAD, SimpleVADDetector
 
 
@@ -62,8 +63,9 @@ def run_cli_demo(
     buffer_size: int = 10,
     buffer_strategy: str = "DROP_OLDEST",
     demo_lifecycle: bool = False,
+    profile: bool = False,
 ) -> int:
-    """Run the complete Week 2 Audio, Device, Lifecycle, VAD & Buffer CLI demo."""
+    """Run the complete Week 2 Audio, Device, Lifecycle, VAD & Buffer CLI demo with optional profiling."""
     # Resolve threshold
     if threshold is None:
         if vad_engine == "simple":
@@ -163,6 +165,9 @@ def run_cli_demo(
 
         frames_count = 0
         speech_count = 0
+        profiler = AudioProfiler(track_memory=True) if profile else None
+        if profiler is not None:
+            profiler.start()
         start_time = time.perf_counter()
 
         print("-" * 76)
@@ -200,6 +205,7 @@ def run_cli_demo(
                 dbfs = buf_frame.calculate_dbfs()
                 meter = render_audio_meter(dbfs, width=15)
 
+                t_vad_0 = time.perf_counter_ns()
                 if simple_detector is not None:
                     vad_evt = simple_detector.evaluate_frame(buf_frame)
                     is_speech = vad_evt.state in (VADState.SPEECH_START, VADState.SPEECH)
@@ -211,6 +217,9 @@ def run_cli_demo(
                 else:
                     is_speech = False
                     state_label = "[UNKNOWN]"
+                t_vad_1 = time.perf_counter_ns()
+                if profiler is not None:
+                    profiler.record_vad(t_vad_1 - t_vad_0)
 
                 if is_speech:
                     speech_count += 1
@@ -255,6 +264,12 @@ def run_cli_demo(
         print(f"  SDK-9 Event Envelope   : ID={summary_envelope.event_id}, Version={summary_envelope.schema_version}")
         print("=" * 76)
         print("Demo completed successfully.\n")
+
+        if profiler is not None:
+            profile_report = profiler.stop(frames_processed=frames_count, frame_duration_ms=float(frame_ms))
+            print(profile_report.format_table())
+            print()
+
         return 0
 
     except AudioError as err:
@@ -353,6 +368,11 @@ def main() -> None:
         action="store_true",
         help="Demonstrate live pause and resume state transitions during streaming",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Enable high-resolution latency and memory profiling (Week 4 Days 22-24)",
+    )
 
     args = parser.parse_args()
     exit_code = run_cli_demo(
@@ -370,6 +390,7 @@ def main() -> None:
         buffer_size=args.buffer_size,
         buffer_strategy=args.buffer_strategy,
         demo_lifecycle=args.demo_lifecycle,
+        profile=args.profile,
     )
     sys.exit(exit_code)
 

@@ -305,3 +305,183 @@ def test_push_invalid_frame_type_raises():
     buf = BoundedAudioBuffer()
     with pytest.raises(BufferError):
         buf.push("not_an_audio_frame")  # type: ignore
+
+
+def test_sustained_backpressure_drop_oldest_flood():
+    """Stress Test: Sustained flood of 2,000 frames into DROP_OLDEST buffer.
+
+    Verifies:
+    1. Buffer capacity strictly retained at max_frames=20.
+    2. Exactly 1,980 frames dropped.
+    3. Accurate telemetry: frames_dropped == 1980, bytes_dropped == 1980 * 640.
+    4. Surviving frames are the most recent 20 frames (seq 1980..1999).
+    """
+    capacity = 20
+    total_flood = 2000
+    frame_bytes = 640  # 20ms at 16kHz 16-bit mono
+    buf = BoundedAudioBuffer(max_frames=capacity, strategy=BackpressureStrategy.DROP_OLDEST)
+
+    for i in range(total_flood):
+        pushed = buf.push(_make_frame(i, duration_ms=20))
+        assert pushed is True
+
+    tele = buf.get_telemetry()
+    assert tele.total_frames_pushed == total_flood
+    assert tele.current_frames == capacity
+    assert tele.frames_dropped == total_flood - capacity
+    assert tele.bytes_dropped == (total_flood - capacity) * frame_bytes
+    assert tele.current_bytes == capacity * frame_bytes
+    assert tele.utilization_ratio == 1.0
+
+    # Pop surviving frames: should strictly be sequence numbers [1980..1999]
+    drained_seqs = []
+    while True:
+        frame = buf.pop()
+        if frame is None:
+            break
+        drained_seqs.append(frame.sequence_number)
+
+    assert len(drained_seqs) == capacity
+    assert drained_seqs == list(range(total_flood - capacity, total_flood))
+
+
+def test_sustained_backpressure_drop_newest_flood():
+    """Stress Test: Sustained flood of 2,000 frames into DROP_NEWEST buffer.
+
+    Verifies:
+    1. Buffer capacity strictly retained at max_frames=20.
+    2. Exactly 1,980 frames dropped/rejected.
+    3. Accurate telemetry: frames_dropped == 1980, bytes_dropped == 1980 * 640.
+    4. Surviving frames are the initial 20 frames (seq 0..19).
+    """
+    capacity = 20
+    total_flood = 2000
+    frame_bytes = 640
+    buf = BoundedAudioBuffer(max_frames=capacity, strategy=BackpressureStrategy.DROP_NEWEST)
+
+    for i in range(total_flood):
+        pushed = buf.push(_make_frame(i, duration_ms=20))
+        if i < capacity:
+            assert pushed is True
+        else:
+            assert pushed is False
+
+    tele = buf.get_telemetry()
+    assert tele.total_frames_pushed == capacity
+    assert tele.current_frames == capacity
+    assert tele.frames_dropped == total_flood - capacity
+    assert tele.bytes_dropped == (total_flood - capacity) * frame_bytes
+    assert tele.total_frames_pushed + tele.frames_dropped == total_flood
+    assert tele.current_bytes == capacity * frame_bytes
+
+    # Pop surviving frames: should strictly be sequence numbers [0..19]
+    drained_seqs = []
+    while True:
+        frame = buf.pop()
+        if frame is None:
+            break
+        drained_seqs.append(frame.sequence_number)
+
+    assert len(drained_seqs) == capacity
+    assert drained_seqs == list(range(capacity))
+
+
+def test_sustained_backpressure_block_slow_consumer_integrity():
+    """Stress Test: Sustained concurrent producer/consumer with BLOCK strategy.
+
+    Verifies:
+    1. Producer pushing 300 frames into small buffer (max_frames=10).
+    2. Slow consumer pops with small delay.
+    3. Zero frames dropped under backpressure.
+    4. Strict sequence monotonicity: all 300 frames received in order without deadlock.
+    """
+    capacity = 10
+    total_frames = 300
+    buf = BoundedAudioBuffer(max_frames=capacity, strategy=BackpressureStrategy.BLOCK)
+
+    consumed_seqs = []
+    consumer_errors = []
+
+    def producer():
+        for i in range(total_frames):
+            buf.push(_make_frame(i, duration_ms=20), timeout=5.0)
+        buf.close()
+
+    def slow_consumer():
+        try:
+            while True:
+                f = buf.pop(timeout=0.1)
+                if f is not None:
+                    consumed_seqs.append(f.sequence_number)
+                elif buf.is_closed:
+                    break
+        except Exception as e:
+            consumer_errors.append(e)
+
+    t_prod = threading.Thread(target=producer)
+    t_cons = threading.Thread(target=slow_consumer)
+
+    t_prod.start()
+    t_cons.start()
+    t_prod.join(timeout=10.0)
+    t_cons.join(timeout=10.0)
+
+    assert not t_prod.is_alive(), "Producer thread hung/deadlocked"
+    assert not t_cons.is_alive(), "Consumer thread hung/deadlocked"
+    assert len(consumer_errors) == 0
+
+    tele = buf.get_telemetry()
+    assert tele.frames_dropped == 0
+    assert tele.bytes_dropped == 0
+    assert len(consumed_seqs) == total_frames
+    assert consumed_seqs == list(range(total_frames))
+
+
+def test_buffer_cancellation_and_concurrent_unblock():
+    """Stress Test: Buffer closure cleanly unblocks blocked producer and consumer threads.
+
+    Verifies:
+    1. Thread blocked on push(timeout=5.0) immediately returns on buf.close() raising BufferError.
+    2. Thread blocked on pop(timeout=5.0) immediately returns None on buf.close().
+    3. No thread hangs indefinitely or raises unexpected exceptions.
+    """
+    # 1. Producer unblock test
+    buf_prod = BoundedAudioBuffer(max_frames=1, strategy=BackpressureStrategy.BLOCK)
+    buf_prod.push(_make_frame(0))  # fill buffer
+    producer_unblocked = False
+
+    def blocked_producer():
+        nonlocal producer_unblocked
+        try:
+            buf_prod.push(_make_frame(1), timeout=5.0)
+        except BufferError:
+            producer_unblocked = True
+
+    t_prod = threading.Thread(target=blocked_producer)
+    t_prod.start()
+    time.sleep(0.05)  # Ensure producer is blocked on full buffer
+
+    buf_prod.close()
+    t_prod.join(timeout=2.0)
+
+    assert not t_prod.is_alive(), "Blocked producer failed to unblock on buffer close"
+    assert producer_unblocked is True
+
+    # 2. Consumer unblock test
+    buf_cons = BoundedAudioBuffer(max_frames=1, strategy=BackpressureStrategy.BLOCK)
+    consumer_unblocked = False
+
+    def blocked_consumer():
+        nonlocal consumer_unblocked
+        res = buf_cons.pop(timeout=5.0)
+        consumer_unblocked = (res is None)
+
+    t_cons = threading.Thread(target=blocked_consumer)
+    t_cons.start()
+    time.sleep(0.05)  # Ensure consumer is blocked on empty buffer
+
+    buf_cons.close()
+    t_cons.join(timeout=2.0)
+
+    assert not t_cons.is_alive(), "Blocked consumer failed to unblock on buffer close"
+    assert consumer_unblocked is True

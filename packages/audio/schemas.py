@@ -4,6 +4,17 @@ Compatibility module re-exporting canonical models from packages.audio.models.
 Maintains backward compatibility with earlier audio module interfaces.
 Canonical definitions reside in packages.audio.models.
 """
+from packages.audio.lifecycle import (
+    StreamLifecycleController,
+    StreamState,
+)
+from packages.audio.profiler import (
+    AudioProfiler,
+    LatencyStats,
+    MemoryStats,
+    ProfileReport,
+    profile_audio_pipeline,
+)
 from packages.audio.events import (
     AudioEventDispatcher,
     AudioEventType,
@@ -38,9 +49,16 @@ __all__ = [
     "AudioEventType",
     "AudioFormat",
     "AudioFrame",
+    "AudioProfiler",
     "AudioSessionPipeline",
     "AudioSTTBridge",
+    "LatencyStats",
+    "MemoryStats",
     "MultiSessionSTTBridge",
+    "ProfileReport",
+    "profile_audio_pipeline",
+    "StreamLifecycleController",
+    "StreamState",
     "VADState",
     "VADEvent",
     "VADResult",
