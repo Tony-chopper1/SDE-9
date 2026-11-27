@@ -726,7 +726,7 @@ export const AppContent: React.FC = () => {
                   className="download-action-btn"
                   onClick={() => handleDownloadTranscript()}
                   disabled={!selectedSession && !liveTranscript.trim() && segments.length === 0}
-                  aria-label="Download current transcript as text file"
+                  aria-label="Export TXT - download current transcript as text file"
                   title="Download transcript"
                 >
                   ↓ Export TXT
