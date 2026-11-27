@@ -15,7 +15,7 @@
   /* Typography Colors (WCAG AA Compliant: Contrast > 4.5:1) */
   --text-primary: #0f172a;       /* Slate 900 - 16.5:1 contrast on white */
   --text-secondary: #334155;     /* Slate 700 - 9.7:1 contrast on white */
-  --text-muted: #64748b;         /* Slate 500 - 4.6:1 contrast on white */
+  --text-muted: #475569;         /* Slate 500 - 4.6:1 contrast on white */
   --text-inverse: #ffffff;
 
   /* Primary Accent - Enterprise Indigo / Royal Blue */
