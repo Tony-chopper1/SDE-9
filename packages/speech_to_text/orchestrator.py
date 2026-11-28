@@ -39,6 +39,9 @@ from packages.speech_to_text.models import (
 from packages.speech_to_text.preprocessor import AudioPreprocessor
 from packages.speech_to_text.reconciler import TranscriptReconciler
 from packages.speech_to_text.retry import BoundedRetryHandler
+from packages.speech_to_text.logger import get_stt_logger
+
+logger = get_stt_logger()
 
 
 class OrchestratorState:

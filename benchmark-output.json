@@ -1,0 +1,46 @@
+{
+  "timestamp": 1795528613.4374707,
+  "iterations": 200,
+  "preprocessing_latency": {
+    "count": 200,
+    "mean_ms": 0.166,
+    "median_ms": 0.164,
+    "p95_ms": 0.173,
+    "p99_ms": 0.228,
+    "min_ms": 0.159,
+    "max_ms": 0.331
+  },
+  "transcription_latency": {
+    "count": 200,
+    "mean_ms": 0.003,
+    "median_ms": 0.002,
+    "p95_ms": 0.003,
+    "p99_ms": 0.006,
+    "min_ms": 0.002,
+    "max_ms": 0.024
+  },
+  "reconciliation_latency": {
+    "count": 200,
+    "mean_ms": 0.01,
+    "median_ms": 0.009,
+    "p95_ms": 0.014,
+    "p99_ms": 0.036,
+    "min_ms": 0.005,
+    "max_ms": 0.089
+  },
+  "end_to_end_frame_latency": {
+    "count": 200,
+    "mean_ms": 0.165,
+    "median_ms": 0.163,
+    "p95_ms": 0.179,
+    "p99_ms": 0.195,
+    "min_ms": 0.158,
+    "max_ms": 0.198
+  },
+  "sla_passed": true,
+  "details": {
+    "provider": "FakeTranscriberService (Mock)",
+    "resampling": "Linear Interpolation (44.1kHz -> 16kHz)",
+    "sla_target_ms": "50.0"
+  }
+}
