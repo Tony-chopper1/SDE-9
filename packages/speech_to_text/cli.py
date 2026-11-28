@@ -42,8 +42,10 @@ class FailingNetworkTranscriber:
 
 def run_demo() -> None:
     print("=" * 75)
+    print("Speech-to-Text & Accumulator Demo")
     print("      AI Voice Co-Pilot - Speech-to-Text Release Demo (Week 4)      ")
     print("=" * 75)
+    print("Speech-to-Text & Accumulator Demo")
 
     transcriber = FakeTranscriberService()
     session_id = f"demo-sess-{int(time.time())}"
@@ -142,6 +144,7 @@ def run_demo() -> None:
     print("\n" + "=" * 75)
     print("      Release Demo Completed Successfully: All Systems Operational     ")
     print("=" * 75)
+    print("Speech-to-Text & Accumulator Demo")
 
 
 if __name__ == "__main__":

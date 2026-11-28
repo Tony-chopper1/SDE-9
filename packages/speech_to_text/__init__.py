@@ -26,8 +26,14 @@ from packages.speech_to_text.orchestrator import (
     SpeechToTextOrchestrator,
 )
 from packages.speech_to_text.event_stream import TranscriptEventBridge
+from packages.speech_to_text.logger import get_stt_logger
+from packages.speech_to_text.benchmark import run_latency_benchmark
+from packages.speech_to_text.fixtures import SyntheticAudioFixtures
 
 __all__ = [
+    "get_stt_logger",
+    "run_latency_benchmark",
+    "SyntheticAudioFixtures",
     "AccumulatorState",
     "TranscriptSegment",
     "AccumulatedUtterance",
